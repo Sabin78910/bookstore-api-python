@@ -42,6 +42,13 @@ def create_app() -> FastAPI:
             raise HTTPException(404, "Book not found")
         return books[book_id]
 
+    @app.put("/books/{book_id}", response_model=Book)
+    def update_book(book_id: int, data: BookIn) -> Book:
+        if book_id not in books:
+            raise HTTPException(404, "Book not found")
+        books[book_id] = Book(id=book_id, **data.model_dump())
+        return books[book_id]
+
     @app.post("/books/{book_id}/sell", response_model=Book)
     def sell(book_id: int, qty: int = Query(default=1, ge=1)) -> Book:
         book = get_book(book_id)

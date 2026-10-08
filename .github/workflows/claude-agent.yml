@@ -58,7 +58,7 @@ jobs:
         run: |
           gh issue edit "$N" --remove-label ready --add-label in-progress
           git checkout -b "agent/issue-$N"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - run: python -m venv .venv && .venv/bin/pip install -q -r requirements-dev.txt
       - id: claude

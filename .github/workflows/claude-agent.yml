@@ -24,7 +24,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Auto-merge finished agent PRs
+        run: .github/scripts/automerge.sh 0
+
   pick:
+    needs: sweep
     if: github.event_name != 'issues' || github.event.label.name == 'ready'
     runs-on: ubuntu-latest
     outputs:
@@ -47,7 +57,7 @@ jobs:
     needs: pick
     if: needs.pick.outputs.number != ''
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       N: ${{ needs.pick.outputs.number }}
       TITLE: ${{ needs.pick.outputs.title }}
@@ -99,6 +109,12 @@ jobs:
           # PRs opened with GITHUB_TOKEN don't auto-trigger CI; dispatch it explicitly.
           for w in ci.yml codeql.yml "Android CI" ; do gh workflow run "$w" --ref "agent/issue-$N" 2>/dev/null || true; done
           echo "PR: $URL" >> "$GITHUB_STEP_SUMMARY"
+      - name: Wait for CI and auto-merge
+        if: success()
+        run: |
+          git checkout -q main 2>/dev/null || true
+          git fetch -q origin main && git checkout -q origin/main -- .github/scripts/automerge.sh 2>/dev/null || true
+          bash .github/scripts/automerge.sh 1500
       - name: Retry later (usage limit or failure)
         if: failure() || cancelled()
         run: |

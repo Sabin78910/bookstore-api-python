@@ -1,0 +1,1 @@
+Draft release notes from merged PRs since the last tag, bump the version, and run the pre-release checklist (CI green, data-safety form matches SDKs, store text current). Do not push tags without asking.

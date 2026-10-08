@@ -1,0 +1,1 @@
+Audit this repo: code quality, security (secrets, deps, CodeQL alerts), privacy/policy, performance, accessibility, CI health. For each item give Pass/Warn/Fail with evidence. Blockers first. Write the report to audits/$(date +%F).md.

@@ -1,0 +1,1 @@
+Review the current diff for correctness, test gaps, security, performance, accessibility and CLAUDE.md rule violations. List findings by severity with file:line. Do not rewrite code unless a fix is critical.

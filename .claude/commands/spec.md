@@ -1,0 +1,1 @@
+Write a one-page spec for: $ARGUMENTS. Include target user, 5 core features, 3 non-goals, key screens, data stored, permissions, privacy implications, and measurable acceptance criteria per feature. Be concise.

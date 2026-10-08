@@ -1,0 +1,1 @@
+From the spec in $ARGUMENTS, create small GitHub issues (<200 changed lines each) ordered by dependency, using .github/ISSUE_TEMPLATE/agent_task.md. Create them with `gh issue create` and label the first 3 `ready`.

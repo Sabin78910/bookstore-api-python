@@ -50,3 +50,35 @@ def test_update_book_invalid():
     c = client()
     c.post("/books", json={"title": "A", "author": "B", "price": 1})
     assert c.put("/books/1", json={"title": "", "author": "B", "price": -1}).status_code == 422
+
+
+def _seed(c: TestClient, n: int) -> None:
+    for i in range(n):
+        c.post("/books", json={"title": f"T{i}", "author": "A", "price": 1})
+
+
+def test_list_books_default_limit():
+    c = client()
+    _seed(c, 25)
+    assert len(c.get("/books").json()) == 20
+
+
+def test_list_books_limit_offset():
+    c = client()
+    _seed(c, 5)
+    ids = [b["id"] for b in c.get("/books", params={"limit": 2, "offset": 1}).json()]
+    assert ids == [2, 3]
+
+
+def test_list_books_offset_past_end():
+    c = client()
+    _seed(c, 3)
+    assert c.get("/books", params={"offset": 10}).json() == []
+
+
+def test_list_books_pagination_bounds():
+    c = client()
+    assert c.get("/books", params={"limit": 0}).status_code == 422
+    assert c.get("/books", params={"limit": 101}).status_code == 422
+    assert c.get("/books", params={"offset": -1}).status_code == 422
+    assert c.get("/books", params={"limit": 100}).status_code == 200

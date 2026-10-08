@@ -73,6 +73,13 @@ jobs:
             Write tests first, then code. Run the test and lint commands from CLAUDE.md until green.
             Do NOT commit, push, or create PRs — the workflow does that. Finish with a 3-line summary.
           claude_args: --max-turns 40 --allowedTools "Read,Write,Edit,Glob,Grep,Bash"
+      - name: Show Claude result
+        if: always() && steps.claude.outputs.execution_file != ''
+        run: |
+          MSG=$(jq -r '[.[] | select(.type=="result")][-1] | "\(.api_error_status // "") \(.result // "")"' "${{ steps.claude.outputs.execution_file }}" 2>/dev/null | head -c 300)
+          echo "Claude result: $MSG"
+          echo "### Claude result\n$MSG" >> "$GITHUB_STEP_SUMMARY"
+          echo "CLAUDE_MSG=$MSG" >> "$GITHUB_ENV"
       - name: Open PR
         if: success()
         run: |
@@ -101,5 +108,5 @@ jobs:
             gh issue comment "$N" -b "Agent run failed 3 times — handing to a human. Logs: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           else
             gh issue edit "$N" --remove-label in-progress --add-label ready
-            gh issue comment "$N" -b "Agent run failed (often the Claude usage limit) — will retry automatically on the next schedule. Logs: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            gh issue comment "$N" -b "Agent run failed: ${CLAUDE_MSG:-unknown}. Will retry automatically on the next schedule. Logs: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           fi

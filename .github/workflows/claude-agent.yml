@@ -1,0 +1,105 @@
+name: Claude agent (cloud)
+
+# AI developer that runs on GitHub, laptop not needed.
+# Picks the oldest issue labeled `ready`, implements it with tests, opens a PR.
+# If the Claude usage limit is hit, the issue goes back to `ready` and the next
+# scheduled run (after the limit resets) continues automatically.
+# Needs repo secret CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`, uses your Claude Pro plan).
+on:
+  schedule:
+    - cron: "49 */2 * * *"
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  actions: write
+  id-token: write
+
+concurrency:
+  group: claude-agent
+  cancel-in-progress: false
+
+jobs:
+  pick:
+    if: github.event_name != 'issues' || github.event.label.name == 'ready'
+    runs-on: ubuntu-latest
+    outputs:
+      number: ${{ steps.pick.outputs.number }}
+      title: ${{ steps.pick.outputs.title }}
+    steps:
+      - id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        run: |
+          if [ "$HAS_TOKEN" != "true" ]; then echo "::notice::CLAUDE_CODE_OAUTH_TOKEN not set — agent idle."; exit 0; fi
+          ISSUE=$(gh issue list -R "$GITHUB_REPOSITORY" --label ready --state open --json number,title \
+                  --jq 'sort_by(.number) | .[0] // empty')
+          [ -z "$ISSUE" ] && exit 0
+          echo "number=$(jq -r .number <<<"$ISSUE")" >> "$GITHUB_OUTPUT"
+          { echo 'title<<EOF'; jq -r .title <<<"$ISSUE"; echo EOF; } >> "$GITHUB_OUTPUT"
+
+  implement:
+    needs: pick
+    if: needs.pick.outputs.number != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      N: ${{ needs.pick.outputs.number }}
+      TITLE: ${{ needs.pick.outputs.title }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Claim issue
+        run: |
+          gh issue edit "$N" --remove-label ready --add-label in-progress
+          git checkout -b "agent/issue-$N"
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: python -m venv .venv && .venv/bin/pip install -q -r requirements-dev.txt
+      - id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          prompt: |
+            You are the engineer for this repo. Read CLAUDE.md first.
+            Implement GitHub issue #${{ needs.pick.outputs.number }} ("${{ needs.pick.outputs.title }}").
+            Get details with: gh issue view ${{ needs.pick.outputs.number }}
+            Write tests first, then code. Run the test and lint commands from CLAUDE.md until green.
+            Do NOT commit, push, or create PRs — the workflow does that. Finish with a 3-line summary.
+          claude_args: --max-turns 40 --allowedTools "Read,Write,Edit,Glob,Grep,Bash"
+      - name: Open PR
+        if: success()
+        run: |
+          git config user.name "claude-agent"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            gh issue edit "$N" --remove-label in-progress --add-label needs-human
+            gh issue comment "$N" -b "Agent finished without code changes — needs a human look."
+            exit 0
+          fi
+          git commit -m "Implement #$N: $TITLE"
+          git push -u origin "agent/issue-$N" --force
+          URL=$(gh pr create --title "#$N: $TITLE" \
+                --body "Closes #$N. Implemented by the cloud Claude agent — review before merging.")
+          gh issue edit "$N" --remove-label in-progress --add-label review
+          # PRs opened with GITHUB_TOKEN don't auto-trigger CI; dispatch it explicitly.
+          for w in ci.yml codeql.yml "Android CI" ; do gh workflow run "$w" --ref "agent/issue-$N" 2>/dev/null || true; done
+          echo "PR: $URL" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retry later (usage limit or failure)
+        if: failure() || cancelled()
+        run: |
+          FAILS=$(gh issue view "$N" --json comments --jq '[.comments[].body | select(startswith("Agent run failed"))] | length')
+          if [ "$FAILS" -ge 3 ]; then
+            gh issue edit "$N" --remove-label in-progress --add-label needs-human
+            gh issue comment "$N" -b "Agent run failed 3 times — handing to a human. Logs: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          else
+            gh issue edit "$N" --remove-label in-progress --add-label ready
+            gh issue comment "$N" -b "Agent run failed (often the Claude usage limit) — will retry automatically on the next schedule. Logs: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          fi

@@ -95,3 +95,15 @@ def test_search_by_title():
     assert len(c.get("/books", params={"q": "MADAN"}).json()) == 2
     assert len(c.get("/books", params={"q": "madan", "author": "devkota"}).json()) == 1
     assert c.get("/books", params={"q": "zzz"}).json() == []
+
+
+def test_low_stock_report():
+    c = client()
+    for title, stock in [("A", 0), ("B", 3), ("C", 4), ("D", 10)]:
+        c.post("/books", json={"title": title, "author": "X", "price": 1, "stock": stock})
+    r = c.get("/books/low-stock")
+    assert r.status_code == 200
+    assert [b["title"] for b in r.json()] == ["A", "B"]
+    r = c.get("/books/low-stock", params={"threshold": 4})
+    assert [b["title"] for b in r.json()] == ["A", "B", "C"]
+    assert c.get("/books/low-stock", params={"threshold": -1}).status_code == 422

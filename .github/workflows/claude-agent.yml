@@ -126,3 +126,17 @@ jobs:
             gh issue edit "$N" --remove-label in-progress --add-label ready
             gh issue comment "$N" -b "Agent run failed: ${CLAUDE_MSG:-unknown}. Will retry automatically on the next schedule. Logs: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           fi
+
+  continue:
+    # Chain straight into the next task when this one succeeded (no 2h wait).
+    # On failure / usage limit we do NOT chain; the schedule retries later.
+    needs: implement
+    if: success()
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - run: |
+          LEFT=$(gh issue list -R "$GITHUB_REPOSITORY" --label ready --state open --json number --jq length)
+          if [ "$LEFT" -gt 0 ]; then gh workflow run claude-agent.yml -R "$GITHUB_REPOSITORY" --ref main && echo "▶ $LEFT task(s) left — started next run"; fi
+

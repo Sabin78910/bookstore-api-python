@@ -25,12 +25,15 @@ def create_app() -> FastAPI:
     @app.get("/books", response_model=list[Book])
     def list_books(
         author: str | None = Query(default=None),
+        q: str | None = Query(default=None),
         limit: int = Query(default=20, ge=1, le=100),
         offset: int = Query(default=0, ge=0),
     ) -> list[Book]:
         result = list(books.values())
         if author:
             result = [b for b in result if author.lower() in b.author.lower()]
+        if q:
+            result = [b for b in result if q.lower() in b.title.lower()]
         return result[offset : offset + limit]
 
     @app.post("/books", response_model=Book, status_code=201)

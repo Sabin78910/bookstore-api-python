@@ -67,6 +67,7 @@ def test_update_book():
         "price": 5,
         "stock": 9,
         "genre": None,
+        "isbn": None,
         "average_rating": None,
         "review_count": 0,
     }
@@ -264,3 +265,45 @@ def test_similar_books_unrated_last_and_404():
     c.post(f"/books/{d}/reviews", json={"rating": 1})
     assert [x["id"] for x in c.get(f"/books/{a}/similar").json()] == [d, b]
     assert c.get("/books/999/similar").status_code == 404
+
+
+def _isbn_book(**kw):
+    return {"title": "T", "author": "A", "price": 1, **kw}
+
+
+def test_isbn_valid_10_and_13():
+    c = client()
+    r = c.post("/books", json=_isbn_book(isbn="0-306-40615-2"))
+    assert r.status_code == 201
+    assert r.json()["isbn"] == "0306406152"
+    assert c.post("/books", json=_isbn_book(isbn="978-0-306-40615-7")).status_code == 201
+    assert c.post("/books", json=_isbn_book(isbn="080442957X")).status_code == 201
+
+
+def test_isbn_optional():
+    assert client().post("/books", json=_isbn_book()).json()["isbn"] is None
+
+
+def test_isbn_invalid_returns_422():
+    c = client()
+    for bad in ["0306406153", "9780306406158", "abc", "12345", ""]:
+        r = c.post("/books", json=_isbn_book(isbn=bad))
+        assert r.status_code == 422, bad
+    assert "ISBN" in c.post("/books", json=_isbn_book(isbn="0306406153")).text
+
+
+def test_duplicate_isbn_returns_409():
+    c = client()
+    assert c.post("/books", json=_isbn_book(isbn="0306406152")).status_code == 201
+    r = c.post("/books", json=_isbn_book(isbn="9780306406157"))
+    assert r.status_code == 201
+    r = c.post("/books", json=_isbn_book(isbn="0-306-40615-2"))
+    assert r.status_code == 409
+
+
+def test_update_isbn_conflict_and_self():
+    c = client()
+    a = c.post("/books", json=_isbn_book(isbn="0306406152")).json()
+    b = c.post("/books", json=_isbn_book(isbn="9780306406157")).json()
+    assert c.put(f"/books/{a['id']}", json=_isbn_book(isbn="0306406152")).status_code == 200
+    assert c.put(f"/books/{b['id']}", json=_isbn_book(isbn="0306406152")).status_code == 409

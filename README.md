@@ -4,6 +4,8 @@ Bookstore REST API built with FastAPI and Pydantic v2. Interactive docs are serv
 
 ![CI](https://github.com/Sabin78910/bookstore-api-python/actions/workflows/ci.yml/badge.svg)
 
+**Live:** https://bookstore-api-lhpl.onrender.com · interactive docs: [`/docs`](https://bookstore-api-lhpl.onrender.com/docs). Hosted on Render's free plan: it sleeps when idle, so the first request can take about 30–60 s. Data is in memory and resets on restart.
+
 ## Run (Mac Terminal / VS Code)
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt

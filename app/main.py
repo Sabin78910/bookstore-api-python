@@ -111,6 +111,24 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
             raise HTTPException(404, "Book not found")
         return with_stats(books[book_id])
 
+    @app.get("/books/{book_id}/similar", response_model=list[Book])
+    def similar_books(book_id: int) -> list[Book]:
+        if book_id not in books:
+            raise HTTPException(404, "Book not found")
+        src = books[book_id]
+        genre = src.genre.lower() if src.genre else None
+        found = [
+            with_stats(b)
+            for b in books.values()
+            if b.id != book_id
+            and (
+                b.author.lower() == src.author.lower()
+                or (genre and b.genre and b.genre.lower() == genre)
+            )
+        ]
+        found.sort(key=lambda b: (-(b.average_rating or 0), b.id))
+        return found
+
     @app.put("/books/{book_id}", response_model=Book)
     def update_book(book_id: int, data: BookIn) -> Book:
         if book_id not in books:

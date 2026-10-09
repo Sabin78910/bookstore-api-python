@@ -1,3 +1,5 @@
+import os
+import secrets
 import time
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -70,6 +72,15 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
             )
         recent.append(now)
         hits[ip] = recent
+        return await call_next(request)
+
+    @app.middleware("http")
+    async def require_api_key(request: Request, call_next):
+        key = os.environ.get("API_KEY")
+        if key and request.method in {"POST", "PUT", "DELETE"}:
+            given = request.headers.get("X-API-Key", "")
+            if not secrets.compare_digest(given.encode(), key.encode()):
+                return JSONResponse({"detail": "Invalid or missing API key"}, status_code=401)
         return await call_next(request)
 
     books: dict[int, Book] = {}

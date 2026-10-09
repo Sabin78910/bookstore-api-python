@@ -2,7 +2,22 @@ import time
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def normalize_isbn(value: str) -> str:
+    isbn = value.replace("-", "").replace(" ", "").upper()
+    if len(isbn) == 10 and isbn[:9].isdigit() and (isbn[9].isdigit() or isbn[9] == "X"):
+        total = sum((10 - i) * (10 if c == "X" else int(c)) for i, c in enumerate(isbn))
+        ok = total % 11 == 0
+    elif len(isbn) == 13 and isbn.isdigit():
+        total = sum(int(c) * (3 if i % 2 else 1) for i, c in enumerate(isbn))
+        ok = total % 10 == 0
+    else:
+        ok = False
+    if not ok:
+        raise ValueError("Invalid ISBN: must be a valid ISBN-10 or ISBN-13")
+    return isbn
 
 
 class BookIn(BaseModel):
@@ -11,6 +26,12 @@ class BookIn(BaseModel):
     price: float = Field(ge=0)
     stock: int = Field(ge=0, default=0)
     genre: str | None = Field(default=None, min_length=1, max_length=50)
+    isbn: str | None = None
+
+    @field_validator("isbn")
+    @classmethod
+    def check_isbn(cls, v: str | None) -> str | None:
+        return None if v is None else normalize_isbn(v)
 
 
 class Book(BookIn):
@@ -60,6 +81,10 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
         avg = round(sum(r.rating for r in rs) / len(rs), 2) if rs else None
         return book.model_copy(update={"average_rating": avg, "review_count": len(rs)})
 
+    def check_isbn_free(isbn: str | None, exclude: int | None = None) -> None:
+        if isbn and any(b.isbn == isbn and b.id != exclude for b in books.values()):
+            raise HTTPException(409, "A book with this ISBN already exists")
+
     @app.get("/health")
     def health() -> dict[str, str | float]:
         return {
@@ -96,6 +121,7 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
 
     @app.post("/books", response_model=Book, status_code=201)
     def create_book(data: BookIn) -> Book:
+        check_isbn_free(data.isbn)
         book = Book(id=counter["next"], **data.model_dump())
         counter["next"] += 1
         books[book.id] = book
@@ -133,6 +159,7 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
     def update_book(book_id: int, data: BookIn) -> Book:
         if book_id not in books:
             raise HTTPException(404, "Book not found")
+        check_isbn_free(data.isbn, exclude=book_id)
         books[book_id] = Book(id=book_id, **data.model_dump())
         return with_stats(books[book_id])
 

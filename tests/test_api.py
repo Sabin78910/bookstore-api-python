@@ -82,3 +82,16 @@ def test_list_books_pagination_bounds():
     assert c.get("/books", params={"limit": 101}).status_code == 422
     assert c.get("/books", params={"offset": -1}).status_code == 422
     assert c.get("/books", params={"limit": 100}).status_code == 200
+
+
+def test_search_by_title():
+    c = client()
+    for title, author in [
+        ("Muna Madan", "Devkota"),
+        ("Madan Puraskar", "Other"),
+        ("Basain", "Koirala"),
+    ]:
+        c.post("/books", json={"title": title, "author": author, "price": 1})
+    assert len(c.get("/books", params={"q": "MADAN"}).json()) == 2
+    assert len(c.get("/books", params={"q": "madan", "author": "devkota"}).json()) == 1
+    assert c.get("/books", params={"q": "zzz"}).json() == []

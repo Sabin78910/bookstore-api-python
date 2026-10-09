@@ -1,9 +1,10 @@
+import html
 import os
 import secrets
 import time
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -95,6 +96,55 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
     def check_isbn_free(isbn: str | None, exclude: int | None = None) -> None:
         if isbn and any(b.isbn == isbn and b.id != exclude for b in books.values()):
             raise HTTPException(409, "A book with this ISBN already exists")
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    def landing() -> str:
+        rated = sorted(
+            (with_stats(b) for b in books.values()),
+            key=lambda b: (-(b.average_rating or 0), b.id),
+        )
+        top = [b for b in rated if b.average_rating is not None][:5]
+        items = (
+            "".join(
+                f"<li>{html.escape(b.title)} <span>by {html.escape(b.author)}"
+                f" &middot; {b.average_rating}&#9733;</span></li>"
+                for b in top
+            )
+            or "<li>No rated books yet.</li>"
+        )
+        cards = "".join(
+            f"<div class='card'><b>{m}</b> <code>{p}</code><p>{d}</p></div>"
+            for m, p, d in [
+                ("GET", "/books", "Browse and search books"),
+                ("POST", "/books", "Add a book"),
+                ("GET", "/genres", "Genres with counts"),
+                ("GET", "/health", "Service status"),
+            ]
+        )
+        return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bookstore API</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700" rel="stylesheet">
+<style>
+body{{margin:0;font-family:Inter,system-ui,sans-serif;background:#faf7f2;color:#222}}
+.hero{{background:#2b2d42;color:#fff;padding:64px 24px;text-align:center}}
+.hero h1{{margin:0 0 8px;font-size:2.5rem}}
+.hero a{{color:#ffd166}}
+main{{max-width:800px;margin:0 auto;padding:24px}}
+.count{{font-size:1.25rem}}
+li span{{color:#666}}
+.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px}}
+.card{{background:#fff;border-radius:8px;padding:16px;box-shadow:0 1px 4px #0002}}
+</style></head><body>
+<section class="hero"><h1>Bookstore API</h1>
+<p>Books, genres and reviews over REST.</p>
+<a href="/docs">Explore the API docs &rarr;</a></section>
+<main>
+<p class="count"><b>{len(books)}</b> books in the catalog</p>
+<h2>Top rated</h2><ul>{items}</ul>
+<h2>Endpoints</h2><div class="cards">{cards}</div>
+</main></body></html>"""
 
     @app.get("/health")
     def health() -> dict[str, str | float]:

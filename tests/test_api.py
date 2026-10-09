@@ -307,3 +307,29 @@ def test_update_isbn_conflict_and_self():
     b = c.post("/books", json=_isbn_book(isbn="9780306406157")).json()
     assert c.put(f"/books/{a['id']}", json=_isbn_book(isbn="0306406152")).status_code == 200
     assert c.put(f"/books/{b['id']}", json=_isbn_book(isbn="0306406152")).status_code == 409
+
+
+def test_writes_open_when_api_key_unset(monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    c = TestClient(create_app())
+    assert c.post("/books", json={"title": "T", "author": "A", "price": 1}).status_code == 201
+
+
+def test_writes_require_api_key(monkeypatch):
+    monkeypatch.setenv("API_KEY", "s3cret")
+    c = TestClient(create_app())
+    body = {"title": "T", "author": "A", "price": 1}
+    assert c.post("/books", json=body).status_code == 401
+    assert c.post("/books", json=body, headers={"X-API-Key": "bad"}).status_code == 401
+    ok = c.post("/books", json=body, headers={"X-API-Key": "s3cret"})
+    assert ok.status_code == 201
+    assert c.put("/books/1", json=body).status_code == 401
+    assert c.delete("/books/1").status_code == 401
+    assert c.delete("/books/1", headers={"X-API-Key": "s3cret"}).status_code == 204
+
+
+def test_reads_stay_public_with_api_key(monkeypatch):
+    monkeypatch.setenv("API_KEY", "s3cret")
+    c = TestClient(create_app())
+    assert c.get("/books").status_code == 200
+    assert c.get("/health").status_code == 200

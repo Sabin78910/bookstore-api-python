@@ -25,7 +25,7 @@ for PR in $(gh pr list --state open --json number,headRefName --jq '.[] | select
     echo "↻ PR #$PR conflicted; issue #$ISSUE re-queued"; continue
   fi
   case "$STATE" in
-    success) gh pr merge "$PR" --squash --delete-branch && echo "✓ merged PR #$PR" && MERGED=1 ;;
+    success) gh pr merge "$PR" --squash --delete-branch && echo "✓ merged PR #$PR" && MERGED=1 && gh issue close "$ISSUE" -c "Done in #$PR (auto-merged)." >/dev/null 2>&1 ;;
     failure) gh issue edit "$ISSUE" --add-label needs-human >/dev/null 2>&1 || true
              gh pr comment "$PR" -b "CI failed — not auto-merging. Needs a human look." >/dev/null 2>&1 || true
              echo "✗ PR #$PR CI failed" ;;

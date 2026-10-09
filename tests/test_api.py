@@ -8,7 +8,30 @@ def client() -> TestClient:
 
 
 def test_health():
-    assert client().get("/health").json() == {"status": "ok"}
+    body = client().get("/health").json()
+    assert body["status"] == "ok"
+    assert body["version"] == "1.0.0"
+    assert body["uptime_seconds"] >= 0
+
+
+def test_rate_limit_returns_429():
+    c = TestClient(create_app(rate_limit=3, rate_window=60))
+    assert [c.get("/books").status_code for _ in range(3)] == [200] * 3
+    r = c.get("/books")
+    assert r.status_code == 429
+    assert "Retry-After" in r.headers
+
+
+def test_rate_limit_window_resets(monkeypatch):
+    import app.main as m
+
+    now = [1000.0]
+    monkeypatch.setattr(m.time, "monotonic", lambda: now[0])
+    c = TestClient(create_app(rate_limit=1, rate_window=10))
+    assert c.get("/books").status_code == 200
+    assert c.get("/books").status_code == 429
+    now[0] += 11
+    assert c.get("/books").status_code == 200
 
 
 def test_book_flow():

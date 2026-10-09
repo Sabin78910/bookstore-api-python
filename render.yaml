@@ -1,0 +1,9 @@
+# Render Blueprint: dashboard.render.com → New → Blueprint → pick this repo → Apply
+services:
+  - type: web
+    name: bookstore-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true          # redeploys on every push to main

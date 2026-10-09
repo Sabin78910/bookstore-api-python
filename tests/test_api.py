@@ -234,3 +234,33 @@ def test_genres_with_counts():
         {"genre": "fiction", "count": 2},
         {"genre": "history", "count": 1},
     ]
+
+
+def _mk(c, title, author, genre=None):
+    body = {"title": title, "author": author, "price": 5}
+    if genre:
+        body["genre"] = genre
+    return c.post("/books", json=body).json()["id"]
+
+
+def test_similar_books_ranked_by_rating_excluding_self():
+    c = client()
+    a = _mk(c, "A", "Ann", "Fiction")
+    b = _mk(c, "B", "Ann")
+    d = _mk(c, "D", "Bob", "fiction")
+    _mk(c, "E", "Cy", "History")
+    c.post(f"/books/{b}/reviews", json={"rating": 3})
+    c.post(f"/books/{d}/reviews", json={"rating": 5})
+    r = c.get(f"/books/{a}/similar")
+    assert r.status_code == 200
+    assert [x["id"] for x in r.json()] == [d, b]
+
+
+def test_similar_books_unrated_last_and_404():
+    c = client()
+    a = _mk(c, "A", "Ann")
+    b = _mk(c, "B", "Ann")
+    d = _mk(c, "D", "Ann")
+    c.post(f"/books/{d}/reviews", json={"rating": 1})
+    assert [x["id"] for x in c.get(f"/books/{a}/similar").json()] == [d, b]
+    assert c.get("/books/999/similar").status_code == 404

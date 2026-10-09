@@ -352,3 +352,30 @@ def test_landing_page_empty_store_and_json_unchanged():
     assert c.get("/").status_code == 200
     assert c.get("/books").json() == []
     assert c.get("/health").json()["status"] == "ok"
+
+
+def test_cors_allowed_origin_on_health():
+    origin = "https://sabin78910.github.io"
+    r = client().get("/health", headers={"Origin": origin})
+    assert r.headers["access-control-allow-origin"] == origin
+
+
+def test_cors_unknown_origin_gets_no_header():
+    r = client().get("/health", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in r.headers
+
+
+def test_cors_preflight_denies_write_methods(monkeypatch):
+    origin = "https://sabin78910.github.io"
+    h = {"Origin": origin, "Access-Control-Request-Method": "POST"}
+    assert client().options("/books", headers=h).status_code == 400
+    h["Access-Control-Request-Method"] = "GET"
+    assert client().options("/health", headers=h).status_code == 200
+
+
+def test_cors_origins_from_env(monkeypatch):
+    monkeypatch.setenv("ALLOWED_ORIGINS", "https://a.example, https://b.example")
+    r = client().get("/health", headers={"Origin": "https://b.example"})
+    assert r.headers["access-control-allow-origin"] == "https://b.example"
+    r = client().get("/health", headers={"Origin": "https://sabin78910.github.io"})
+    assert "access-control-allow-origin" not in r.headers

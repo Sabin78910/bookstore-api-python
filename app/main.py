@@ -4,6 +4,7 @@ import secrets
 import time
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -83,6 +84,15 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
             if not secrets.compare_digest(given.encode(), key.encode()):
                 return JSONResponse({"detail": "Invalid or missing API key"}, status_code=401)
         return await call_next(request)
+
+    origins = [
+        o.strip()
+        for o in os.environ.get("ALLOWED_ORIGINS", "https://sabin78910.github.io").split(",")
+        if o.strip()
+    ]
+    app.add_middleware(
+        CORSMiddleware, allow_origins=origins, allow_methods=["GET", "HEAD", "OPTIONS"]
+    )
 
     books: dict[int, Book] = {}
     counter = {"next": 1}

@@ -66,6 +66,7 @@ def test_update_book():
         "author": "B2",
         "price": 5,
         "stock": 9,
+        "genre": None,
         "average_rating": None,
         "review_count": 0,
     }
@@ -201,3 +202,35 @@ def test_update_and_delete_keep_review_consistency():
     assert r.json()["review_count"] == 1
     c.delete(f"/books/{bid}")
     assert c.get(f"/books/{bid}/reviews").status_code == 404
+
+
+def _add(c, title, author, genre=None):
+    body = {"title": title, "author": author, "price": 1}
+    if genre:
+        body["genre"] = genre
+    return c.post("/books", json=body).json()["id"]
+
+
+def test_filter_by_genre_and_author():
+    c = client()
+    _add(c, "A", "Ann", "Fiction")
+    _add(c, "B", "Bob", "fiction")
+    _add(c, "C", "Ann", "History")
+    _add(c, "D", "Ann")
+    assert len(c.get("/books", params={"genre": "FICTION"}).json()) == 2
+    both = c.get("/books", params={"genre": "fiction", "author": "ann"}).json()
+    assert [b["title"] for b in both] == ["A"]
+    assert c.get("/books", params={"genre": "nope"}).json() == []
+
+
+def test_genres_with_counts():
+    c = client()
+    assert c.get("/genres").json() == []
+    _add(c, "A", "Ann", "Fiction")
+    _add(c, "B", "Bob", "fiction")
+    _add(c, "C", "Ann", "History")
+    _add(c, "D", "Ann")
+    assert c.get("/genres").json() == [
+        {"genre": "fiction", "count": 2},
+        {"genre": "history", "count": 1},
+    ]

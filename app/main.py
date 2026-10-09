@@ -1,4 +1,7 @@
-from fastapi import FastAPI, HTTPException, Query
+import time
+
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 
@@ -13,14 +16,38 @@ class Book(BookIn):
     id: int
 
 
-def create_app() -> FastAPI:
+def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
     app = FastAPI(title="Bookstore API", version="1.0.0")
+    started = time.monotonic()
+    hits: dict[str, list[float]] = {}
+
+    @app.middleware("http")
+    async def limit_requests(request: Request, call_next):
+        ip = request.client.host if request.client else "unknown"
+        now = time.monotonic()
+        recent = [t for t in hits.get(ip, []) if now - t < rate_window]
+        if len(recent) >= rate_limit:
+            hits[ip] = recent
+            retry = max(1, int(rate_window - (now - recent[0])) + 1)
+            return JSONResponse(
+                {"detail": "Rate limit exceeded"},
+                status_code=429,
+                headers={"Retry-After": str(retry)},
+            )
+        recent.append(now)
+        hits[ip] = recent
+        return await call_next(request)
+
     books: dict[int, Book] = {}
     counter = {"next": 1}
 
     @app.get("/health")
-    def health() -> dict[str, str]:
-        return {"status": "ok"}
+    def health() -> dict[str, str | float]:
+        return {
+            "status": "ok",
+            "version": app.version,
+            "uptime_seconds": round(time.monotonic() - started, 3),
+        }
 
     @app.get("/books", response_model=list[Book])
     def list_books(

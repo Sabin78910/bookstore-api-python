@@ -60,7 +60,15 @@ def test_update_book():
     c.post("/books", json={"title": "A", "author": "B", "price": 1, "stock": 1})
     r = c.put("/books/1", json={"title": "A2", "author": "B2", "price": 5, "stock": 9})
     assert r.status_code == 200
-    assert r.json() == {"id": 1, "title": "A2", "author": "B2", "price": 5, "stock": 9}
+    assert r.json() == {
+        "id": 1,
+        "title": "A2",
+        "author": "B2",
+        "price": 5,
+        "stock": 9,
+        "average_rating": None,
+        "review_count": 0,
+    }
     assert c.get("/books/1").json()["title"] == "A2"
 
 
@@ -130,3 +138,66 @@ def test_low_stock_report():
     r = c.get("/books/low-stock", params={"threshold": 4})
     assert [b["title"] for b in r.json()] == ["A", "B", "C"]
     assert c.get("/books/low-stock", params={"threshold": -1}).status_code == 422
+
+
+def _book(c: TestClient) -> int:
+    r = c.post("/books", json={"title": "T", "author": "A", "price": 1})
+    return r.json()["id"]
+
+
+def test_book_without_reviews_has_no_rating():
+    c = client()
+    body = c.get(f"/books/{_book(c)}").json()
+    assert body["average_rating"] is None
+    assert body["review_count"] == 0
+
+
+def test_create_and_list_reviews():
+    c = client()
+    bid = _book(c)
+    r = c.post(f"/books/{bid}/reviews", json={"rating": 5, "text": "Great"})
+    assert r.status_code == 201
+    assert r.json()["rating"] == 5
+    c.post(f"/books/{bid}/reviews", json={"rating": 2, "text": "Meh"})
+    reviews = c.get(f"/books/{bid}/reviews").json()
+    assert [x["text"] for x in reviews] == ["Great", "Meh"]
+
+
+def test_book_includes_average_and_count():
+    c = client()
+    bid = _book(c)
+    c.post(f"/books/{bid}/reviews", json={"rating": 5, "text": ""})
+    c.post(f"/books/{bid}/reviews", json={"rating": 2, "text": ""})
+    for body in (c.get(f"/books/{bid}").json(), c.get("/books").json()[0]):
+        assert body["average_rating"] == 3.5
+        assert body["review_count"] == 2
+
+
+def test_review_validation():
+    c = client()
+    bid = _book(c)
+    for bad in (
+        {"rating": 0, "text": ""},
+        {"rating": 6, "text": ""},
+        {"rating": 3, "text": "x" * 1001},
+    ):
+        assert c.post(f"/books/{bid}/reviews", json=bad).status_code == 422
+    ok = {"rating": 3, "text": "x" * 1000}
+    assert c.post(f"/books/{bid}/reviews", json=ok).status_code == 201
+
+
+def test_reviews_unknown_book_404():
+    c = client()
+    assert c.get("/books/99/reviews").status_code == 404
+    r = c.post("/books/99/reviews", json={"rating": 3, "text": ""})
+    assert r.status_code == 404
+
+
+def test_update_and_delete_keep_review_consistency():
+    c = client()
+    bid = _book(c)
+    c.post(f"/books/{bid}/reviews", json={"rating": 4, "text": ""})
+    r = c.put(f"/books/{bid}", json={"title": "N", "author": "A", "price": 2})
+    assert r.json()["review_count"] == 1
+    c.delete(f"/books/{bid}")
+    assert c.get(f"/books/{bid}/reviews").status_code == 404

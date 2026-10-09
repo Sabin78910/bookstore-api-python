@@ -14,6 +14,18 @@ class BookIn(BaseModel):
 
 class Book(BookIn):
     id: int
+    average_rating: float | None = None
+    review_count: int = 0
+
+
+class ReviewIn(BaseModel):
+    rating: int = Field(ge=1, le=5)
+    text: str = Field(default="", max_length=1000)
+
+
+class Review(ReviewIn):
+    id: int
+    book_id: int
 
 
 def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
@@ -40,6 +52,12 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
 
     books: dict[int, Book] = {}
     counter = {"next": 1}
+    reviews: dict[int, list[Review]] = {}
+
+    def with_stats(book: Book) -> Book:
+        rs = reviews.get(book.id, [])
+        avg = round(sum(r.rating for r in rs) / len(rs), 2) if rs else None
+        return book.model_copy(update={"average_rating": avg, "review_count": len(rs)})
 
     @app.get("/health")
     def health() -> dict[str, str | float]:
@@ -61,44 +79,62 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
             result = [b for b in result if author.lower() in b.author.lower()]
         if q:
             result = [b for b in result if q.lower() in b.title.lower()]
-        return result[offset : offset + limit]
+        return [with_stats(b) for b in result[offset : offset + limit]]
 
     @app.post("/books", response_model=Book, status_code=201)
     def create_book(data: BookIn) -> Book:
         book = Book(id=counter["next"], **data.model_dump())
         counter["next"] += 1
         books[book.id] = book
-        return book
+        return with_stats(book)
 
     @app.get("/books/low-stock", response_model=list[Book])
     def low_stock(threshold: int = Query(default=3, ge=0)) -> list[Book]:
-        return [b for b in books.values() if b.stock <= threshold]
+        return [with_stats(b) for b in books.values() if b.stock <= threshold]
 
     @app.get("/books/{book_id}", response_model=Book)
     def get_book(book_id: int) -> Book:
         if book_id not in books:
             raise HTTPException(404, "Book not found")
-        return books[book_id]
+        return with_stats(books[book_id])
 
     @app.put("/books/{book_id}", response_model=Book)
     def update_book(book_id: int, data: BookIn) -> Book:
         if book_id not in books:
             raise HTTPException(404, "Book not found")
         books[book_id] = Book(id=book_id, **data.model_dump())
-        return books[book_id]
+        return with_stats(books[book_id])
 
     @app.post("/books/{book_id}/sell", response_model=Book)
     def sell(book_id: int, qty: int = Query(default=1, ge=1)) -> Book:
-        book = get_book(book_id)
+        if book_id not in books:
+            raise HTTPException(404, "Book not found")
+        book = books[book_id]
         if book.stock < qty:
             raise HTTPException(422, "Insufficient stock")
         book.stock -= qty
-        return book
+        return with_stats(book)
 
     @app.delete("/books/{book_id}", status_code=204)
     def delete_book(book_id: int) -> None:
         if books.pop(book_id, None) is None:
             raise HTTPException(404, "Book not found")
+        reviews.pop(book_id, None)
+
+    @app.post("/books/{book_id}/reviews", response_model=Review, status_code=201)
+    def add_review(book_id: int, data: ReviewIn) -> Review:
+        if book_id not in books:
+            raise HTTPException(404, "Book not found")
+        items = reviews.setdefault(book_id, [])
+        review = Review(id=len(items) + 1, book_id=book_id, **data.model_dump())
+        items.append(review)
+        return review
+
+    @app.get("/books/{book_id}/reviews", response_model=list[Review])
+    def list_reviews(book_id: int) -> list[Review]:
+        if book_id not in books:
+            raise HTTPException(404, "Book not found")
+        return reviews.get(book_id, [])
 
     return app
 

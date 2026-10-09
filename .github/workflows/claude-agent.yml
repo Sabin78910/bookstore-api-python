@@ -29,7 +29,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Auto-merge finished agent PRs
         run: .github/scripts/automerge.sh 0
 
@@ -63,7 +63,7 @@ jobs:
       TITLE: ${{ needs.pick.outputs.title }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Claim issue
         run: |
           gh issue edit "$N" --remove-label ready --add-label in-progress

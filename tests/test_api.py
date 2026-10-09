@@ -333,3 +333,22 @@ def test_reads_stay_public_with_api_key(monkeypatch):
     c = TestClient(create_app())
     assert c.get("/books").status_code == 200
     assert c.get("/health").status_code == 200
+
+
+def test_landing_page_html_with_live_data():
+    c = client()
+    c.post("/books", json={"title": "Dune <b>", "author": "Herbert", "price": 9})
+    c.post("/books/1/reviews", json={"rating": 5})
+    r = c.get("/")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    assert "/docs" in r.text
+    assert "Dune &lt;b&gt;" in r.text
+    assert "Dune <b>" not in r.text
+
+
+def test_landing_page_empty_store_and_json_unchanged():
+    c = client()
+    assert c.get("/").status_code == 200
+    assert c.get("/books").json() == []
+    assert c.get("/health").json()["status"] == "ok"

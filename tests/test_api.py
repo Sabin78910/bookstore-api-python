@@ -82,3 +82,29 @@ def test_list_books_pagination_bounds():
     assert c.get("/books", params={"limit": 101}).status_code == 422
     assert c.get("/books", params={"offset": -1}).status_code == 422
     assert c.get("/books", params={"limit": 100}).status_code == 200
+
+
+def _add(c: TestClient, title: str, stock: int) -> None:
+    r = c.post("/books", json={"title": title, "author": "A", "price": 1, "stock": stock})
+    assert r.status_code == 201
+
+
+def test_low_stock_default_threshold():
+    c = client()
+    for title, stock in [("a", 0), ("b", 3), ("c", 4)]:
+        _add(c, title, stock)
+    r = c.get("/books/low-stock")
+    assert r.status_code == 200
+    assert [b["title"] for b in r.json()] == ["a", "b"]
+
+
+def test_low_stock_custom_threshold():
+    c = client()
+    for title, stock in [("a", 0), ("b", 3), ("c", 4)]:
+        _add(c, title, stock)
+    r = c.get("/books/low-stock", params={"threshold": 0})
+    assert [b["title"] for b in r.json()] == ["a"]
+
+
+def test_low_stock_negative_threshold_rejected():
+    assert client().get("/books/low-stock", params={"threshold": -1}).status_code == 422

@@ -40,6 +40,10 @@ def create_app() -> FastAPI:
         books[book.id] = book
         return book
 
+    @app.get("/books/low-stock", response_model=list[Book])
+    def low_stock(threshold: int = Query(default=3, ge=0)) -> list[Book]:
+        return [b for b in books.values() if b.stock <= threshold]
+
     @app.get("/books/{book_id}", response_model=Book)
     def get_book(book_id: int) -> Book:
         if book_id not in books:

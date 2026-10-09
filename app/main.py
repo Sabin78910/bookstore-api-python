@@ -10,6 +10,7 @@ class BookIn(BaseModel):
     author: str = Field(min_length=1, max_length=100)
     price: float = Field(ge=0)
     stock: int = Field(ge=0, default=0)
+    genre: str | None = Field(default=None, min_length=1, max_length=50)
 
 
 class Book(BookIn):
@@ -70,6 +71,7 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
     @app.get("/books", response_model=list[Book])
     def list_books(
         author: str | None = Query(default=None),
+        genre: str | None = Query(default=None),
         q: str | None = Query(default=None),
         limit: int = Query(default=20, ge=1, le=100),
         offset: int = Query(default=0, ge=0),
@@ -77,9 +79,20 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
         result = list(books.values())
         if author:
             result = [b for b in result if author.lower() in b.author.lower()]
+        if genre:
+            result = [b for b in result if b.genre and b.genre.lower() == genre.lower()]
         if q:
             result = [b for b in result if q.lower() in b.title.lower()]
         return [with_stats(b) for b in result[offset : offset + limit]]
+
+    @app.get("/genres")
+    def list_genres() -> list[dict[str, str | int]]:
+        counts: dict[str, int] = {}
+        for b in books.values():
+            if b.genre:
+                key = b.genre.lower()
+                counts[key] = counts.get(key, 0) + 1
+        return [{"genre": g, "count": c} for g, c in sorted(counts.items())]
 
     @app.post("/books", response_model=Book, status_code=201)
     def create_book(data: BookIn) -> Book:

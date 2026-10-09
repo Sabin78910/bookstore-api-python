@@ -11,4 +11,9 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
+    # One combined PR per month. Needs a human merge: GitHub doesn't let
+    # automation merge changes to workflow files.
+    groups:
+      actions:
+        patterns: ["*"]

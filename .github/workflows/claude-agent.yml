@@ -103,7 +103,10 @@ jobs:
             exit 0
           fi
           git commit -m "Implement #$N: $TITLE"
-          git push -u origin "agent/issue-$N" --force
+          # Drop any stale branch from an earlier attempt: re-pushing over it would make
+          # newer main commits (incl. workflow files) count as agent changes and be rejected.
+          git push origin --delete "agent/issue-$N" >/dev/null 2>&1 || true
+          git push -u origin "agent/issue-$N"
           URL=$(gh pr create --title "#$N: $TITLE" \
                 --body "Closes #$N. Implemented by the cloud Claude agent — review before merging.")
           gh issue edit "$N" --remove-label in-progress --add-label review

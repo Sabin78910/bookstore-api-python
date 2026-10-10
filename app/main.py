@@ -4,12 +4,15 @@ import json
 import os
 import secrets
 import time
+from http import HTTPStatus
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
 def normalize_isbn(value: str) -> str:
@@ -57,6 +60,25 @@ class Review(ReviewIn):
     book_id: int
 
 
+def problem(
+    status: int, detail: str, headers: dict[str, str] | None = None, **extra: object
+) -> JSONResponse:
+    """RFC 9457 problem+json response."""
+    body = {
+        "type": "about:blank",
+        "title": HTTPStatus(status).phrase if status != 422 else "Unprocessable Content",
+        "status": status,
+        "detail": detail,
+        **extra,
+    }
+    return JSONResponse(
+        jsonable_encoder(body),
+        status_code=status,
+        headers=headers,
+        media_type="application/problem+json",
+    )
+
+
 def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
     app = FastAPI(title="Bookstore API", version="1.0.0")
     started = time.monotonic()
@@ -70,11 +92,7 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
         if len(recent) >= rate_limit:
             hits[ip] = recent
             retry = max(1, int(rate_window - (now - recent[0])) + 1)
-            return JSONResponse(
-                {"detail": "Rate limit exceeded"},
-                status_code=429,
-                headers={"Retry-After": str(retry)},
-            )
+            return problem(429, "Rate limit exceeded", {"Retry-After": str(retry)})
         recent.append(now)
         hits[ip] = recent
         return await call_next(request)
@@ -85,8 +103,16 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
         if key and request.method in {"POST", "PUT", "DELETE"}:
             given = request.headers.get("X-API-Key", "")
             if not secrets.compare_digest(given.encode(), key.encode()):
-                return JSONResponse({"detail": "Invalid or missing API key"}, status_code=401)
+                return problem(401, "Invalid or missing API key")
         return await call_next(request)
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error(request: Request, exc: StarletteHTTPException):
+        return problem(exc.status_code, str(exc.detail), exc.headers)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, exc: RequestValidationError):
+        return problem(422, "Request validation failed", errors=exc.errors())
 
     origins = [
         o.strip()

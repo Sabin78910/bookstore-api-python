@@ -416,3 +416,41 @@ def test_etag_changes_after_update_sell_delete():
     assert c.get(url, headers={"If-None-Match": etag}).status_code == 404
     r = c.get("/books", headers={"If-None-Match": list_etag})
     assert r.status_code == 200 and r.headers["ETag"] != list_etag
+
+
+def _assert_problem(r, status, title):
+    assert r.status_code == status
+    assert r.headers["content-type"].startswith("application/problem+json")
+    body = r.json()
+    assert body["type"] == "about:blank"
+    assert body["status"] == status
+    assert body["title"] == title
+    assert isinstance(body["detail"], str) and body["detail"]
+    return body
+
+
+def test_problem_json_404():
+    body = _assert_problem(client().get("/books/99"), 404, "Not Found")
+    assert body["detail"] == "Book not found"
+
+
+def test_problem_json_422_keeps_field_errors():
+    r = client().post("/books", json={"title": "", "author": "x", "price": -1})
+    body = _assert_problem(r, 422, "Unprocessable Content")
+    assert {e["loc"][-1] for e in body["errors"]} >= {"title", "price"}
+
+
+def test_problem_json_429_keeps_retry_after():
+    c = TestClient(create_app(rate_limit=1))
+    c.get("/health")
+    r = c.get("/health")
+    body = _assert_problem(r, 429, "Too Many Requests")
+    assert body["detail"] == "Rate limit exceeded"
+    assert int(r.headers["Retry-After"]) >= 1
+
+
+def test_problem_json_401(monkeypatch):
+    monkeypatch.setenv("API_KEY", "secret")
+    r = client().post("/books", json={"title": "a", "author": "b", "price": 1})
+    body = _assert_problem(r, 401, "Unauthorized")
+    assert body["detail"] == "Invalid or missing API key"

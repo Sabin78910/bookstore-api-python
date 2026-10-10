@@ -18,6 +18,8 @@ GET /health · GET /books?author=&sort=-price (sort: title, author, price; respo
 
 Write protection: when the `API_KEY` env var is set, POST/PUT/DELETE require an `X-API-Key` header with that value (else 401); reads stay public. Render generates `API_KEY` via `render.yaml` (see the service's Environment tab). Unset locally = writes open.
 
+Security headers: every response (including errors, 304s and 429s) carries `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`; POST/PUT/DELETE responses add `Cache-Control: no-store`; all but `/docs` and `/redoc` add `Content-Security-Policy: frame-ancestors 'none'`.
+
 ## Automation (runs on GitHub, no laptop needed)
 | Workflow | Trigger | What it does |
 |---|---|---|

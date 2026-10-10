@@ -599,3 +599,63 @@ def test_cors_exposes_pagination_headers():
     r = client().get("/books", headers={"Origin": origin})
     exposed = r.headers["access-control-expose-headers"].lower()
     assert "x-total-count" in exposed and "link" in exposed
+
+
+def _assert_baseline(r, csp=True):
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+    assert r.headers["Referrer-Policy"] == "no-referrer"
+    if csp:
+        assert r.headers["Content-Security-Policy"] == "frame-ancestors 'none'"
+
+
+_BOOK = {"title": "T", "author": "A", "price": 1}
+
+
+def test_security_headers_on_success_and_landing():
+    c = client()
+    _assert_baseline(c.get("/health"))
+    _assert_baseline(c.get("/"))
+    assert "Cache-Control" not in c.get("/health").headers
+
+
+def test_security_headers_on_writes_no_store():
+    c = client()
+    r = c.post("/books", json=_BOOK)
+    assert r.status_code == 201
+    _assert_baseline(r)
+    assert r.headers["Cache-Control"] == "no-store"
+    assert c.put("/books/1", json=_BOOK).headers["Cache-Control"] == "no-store"
+    r = c.delete("/books/1")
+    assert r.status_code == 204
+    assert r.headers["Cache-Control"] == "no-store"
+
+
+def test_security_headers_on_errors_and_304():
+    c = client()
+    _assert_baseline(c.get("/books/99"))
+    _assert_baseline(c.get("/books?limit=0"))
+    r = c.get("/books")
+    r304 = c.get("/books", headers={"If-None-Match": r.headers["ETag"]})
+    assert r304.status_code == 304
+    _assert_baseline(r304)
+
+
+def test_security_headers_on_429_and_401(monkeypatch):
+    c = TestClient(create_app(rate_limit=1, rate_window=60))
+    c.get("/books")
+    r = c.get("/books")
+    assert r.status_code == 429
+    _assert_baseline(r)
+    monkeypatch.setenv("API_KEY", "k")
+    c = client()
+    r = c.post("/books", json=_BOOK)
+    assert r.status_code == 401
+    _assert_baseline(r)
+    assert r.headers["Cache-Control"] == "no-store"
+
+
+def test_docs_have_no_csp():
+    r = client().get("/docs")
+    assert r.status_code == 200
+    assert "Content-Security-Policy" not in r.headers
+    assert r.headers["X-Content-Type-Options"] == "nosniff"

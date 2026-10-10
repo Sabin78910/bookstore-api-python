@@ -109,6 +109,17 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
                 return problem(401, "Invalid or missing API key")
         return await call_next(request)
 
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        if request.method in {"POST", "PUT", "DELETE"}:
+            response.headers["Cache-Control"] = "no-store"
+        if request.url.path not in {"/docs", "/redoc"}:
+            response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+        return response
+
     @app.exception_handler(StarletteHTTPException)
     async def http_error(request: Request, exc: StarletteHTTPException):
         return problem(exc.status_code, str(exc.detail), exc.headers)

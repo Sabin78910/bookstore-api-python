@@ -123,7 +123,10 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
         if o.strip()
     ]
     app.add_middleware(
-        CORSMiddleware, allow_origins=origins, allow_methods=["GET", "HEAD", "OPTIONS"]
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_methods=["GET", "HEAD", "OPTIONS"],
+        expose_headers=["X-Total-Count", "Link"],
     )
 
     books: dict[int, Book] = {}
@@ -135,7 +138,9 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
         avg = round(sum(r.rating for r in rs) / len(rs), 2) if rs else None
         return book.model_copy(update={"average_rating": avg, "review_count": len(rs)})
 
-    def conditional(request: Request, payload: object) -> Response:
+    def conditional(
+        request: Request, payload: object, extra: dict[str, str] | None = None
+    ) -> Response:
         body = json.dumps(
             jsonable_encoder(payload), separators=(",", ":"), ensure_ascii=False
         ).encode()
@@ -145,8 +150,13 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
             for t in request.headers.get("if-none-match", "").split(",")
         ]
         if etag in sent or "*" in sent:
-            return Response(status_code=304, headers={"ETag": etag})
-        return Response(body, media_type="application/json", headers={"ETag": etag})
+            return Response(status_code=304, headers={**(extra or {}), "ETag": etag})
+        return Response(
+            body, media_type="application/json", headers={**(extra or {}), "ETag": etag}
+        )
+
+    def page_url(request: Request, limit: int, offset: int) -> str:
+        return str(request.url.include_query_params(limit=limit, offset=offset))
 
     def check_isbn_free(isbn: str | None, exclude: int | None = None) -> None:
         if isbn and any(b.isbn == isbn and b.id != exclude for b in books.values()):
@@ -234,7 +244,17 @@ li span{{color:#666}}
                 key=lambda b: v.lower() if isinstance(v := getattr(b, field), str) else v,
                 reverse=sort.startswith("-"),
             )
-        return conditional(request, [with_stats(b) for b in result[offset : offset + limit]])
+        total = len(result)
+        headers = {"X-Total-Count": str(total)}
+        links = []
+        if offset + limit < total:
+            links.append(f'<{page_url(request, limit, offset + limit)}>; rel="next"')
+        if offset > 0:
+            links.append(f'<{page_url(request, limit, max(0, offset - limit))}>; rel="prev"')
+        if links:
+            headers["Link"] = ", ".join(links)
+        page = [with_stats(b) for b in result[offset : offset + limit]]
+        return conditional(request, page, headers)
 
     @app.get("/genres")
     def list_genres() -> list[dict[str, str | int]]:

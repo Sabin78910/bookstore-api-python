@@ -14,7 +14,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 ```
 
 ## API / Output
-GET /health · GET /books?author=&sort=-price (sort: title, author, price) · POST /books · GET /books/{id} · POST /books/{id}/sell?qty= · DELETE /books/{id}
+GET /health · GET /books?author=&sort=-price (sort: title, author, price; responses carry `X-Total-Count` and RFC 8288 `Link` rel=next/prev headers) · POST /books · GET /books/{id} · POST /books/{id}/sell?qty= · DELETE /books/{id}
 
 Write protection: when the `API_KEY` env var is set, POST/PUT/DELETE require an `X-API-Key` header with that value (else 401); reads stay public. Render generates `API_KEY` via `render.yaml` (see the service's Environment tab). Unset locally = writes open.
 

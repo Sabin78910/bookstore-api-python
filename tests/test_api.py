@@ -512,3 +512,90 @@ def test_sort_with_filters_and_pagination():
 
 def test_no_sort_keeps_insertion_order():
     assert _titles(_seed_sort().get("/books")) == ["Banana", "apple", "Cherry", "Date"]
+
+
+def _seed(c: TestClient, n: int, genre: str = "fic") -> None:
+    for i in range(n):
+        c.post(
+            "/books",
+            json={"title": f"B{i}", "author": "A", "price": 1, "genre": genre},
+        )
+
+
+def _links(r) -> dict[str, str]:
+    out = {}
+    for part in r.headers.get("link", "").split(", "):
+        if part:
+            url, rel = part.split("; rel=")
+            out[rel.strip('"')] = url.strip("<>")
+    return out
+
+
+def test_pagination_first_page():
+    c = client()
+    _seed(c, 5)
+    r = c.get("/books?limit=2&genre=fic")
+    assert r.headers["x-total-count"] == "5"
+    links = _links(r)
+    assert set(links) == {"next"}
+    assert "offset=2" in links["next"] and "limit=2" in links["next"]
+    assert "genre=fic" in links["next"]
+
+
+def test_pagination_middle_page():
+    c = client()
+    _seed(c, 5)
+    r = c.get("/books?limit=2&offset=2")
+    links = _links(r)
+    assert set(links) == {"next", "prev"}
+    assert "offset=4" in links["next"]
+    assert "offset=0" in links["prev"]
+
+
+def test_pagination_last_page():
+    c = client()
+    _seed(c, 5)
+    r = c.get("/books?limit=2&offset=4")
+    links = _links(r)
+    assert set(links) == {"prev"}
+    assert "offset=2" in links["prev"]
+
+
+def test_pagination_prev_offset_clamped():
+    c = client()
+    _seed(c, 5)
+    assert "offset=0" in _links(c.get("/books?limit=3&offset=1"))["prev"]
+
+
+def test_pagination_single_page_has_no_link():
+    c = client()
+    _seed(c, 3)
+    r = c.get("/books")
+    assert r.headers["x-total-count"] == "3"
+    assert "link" not in r.headers
+
+
+def test_total_count_respects_filters():
+    c = client()
+    _seed(c, 3, "fic")
+    _seed(c, 2, "sci")
+    assert c.get("/books?genre=sci&limit=1").headers["x-total-count"] == "2"
+    assert c.get("/books?q=B2").headers["x-total-count"] == "1"
+    assert c.get("/books?author=zzz").headers["x-total-count"] == "0"
+
+
+def test_pagination_headers_with_etag_304():
+    c = client()
+    _seed(c, 5)
+    first = c.get("/books?limit=2")
+    r = c.get("/books?limit=2", headers={"If-None-Match": first.headers["etag"]})
+    assert r.status_code == 304
+    assert r.headers["x-total-count"] == "5"
+    assert "next" in _links(r)
+
+
+def test_cors_exposes_pagination_headers():
+    origin = "https://sabin78910.github.io"
+    r = client().get("/books", headers={"Origin": origin})
+    exposed = r.headers["access-control-expose-headers"].lower()
+    assert "x-total-count" in exposed and "link" in exposed

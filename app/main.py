@@ -1,11 +1,14 @@
+import hashlib
 import html
+import json
 import os
 import secrets
 import time
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -103,6 +106,19 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
         avg = round(sum(r.rating for r in rs) / len(rs), 2) if rs else None
         return book.model_copy(update={"average_rating": avg, "review_count": len(rs)})
 
+    def conditional(request: Request, payload: object) -> Response:
+        body = json.dumps(
+            jsonable_encoder(payload), separators=(",", ":"), ensure_ascii=False
+        ).encode()
+        etag = '"' + hashlib.sha256(body).hexdigest() + '"'
+        sent = [
+            t.strip().removeprefix("W/")
+            for t in request.headers.get("if-none-match", "").split(",")
+        ]
+        if etag in sent or "*" in sent:
+            return Response(status_code=304, headers={"ETag": etag})
+        return Response(body, media_type="application/json", headers={"ETag": etag})
+
     def check_isbn_free(isbn: str | None, exclude: int | None = None) -> None:
         if isbn and any(b.isbn == isbn and b.id != exclude for b in books.values()):
             raise HTTPException(409, "A book with this ISBN already exists")
@@ -166,12 +182,13 @@ li span{{color:#666}}
 
     @app.get("/books", response_model=list[Book])
     def list_books(
+        request: Request,
         author: str | None = Query(default=None),
         genre: str | None = Query(default=None),
         q: str | None = Query(default=None),
         limit: int = Query(default=20, ge=1, le=100),
         offset: int = Query(default=0, ge=0),
-    ) -> list[Book]:
+    ) -> Response:
         result = list(books.values())
         if author:
             result = [b for b in result if author.lower() in b.author.lower()]
@@ -179,7 +196,7 @@ li span{{color:#666}}
             result = [b for b in result if b.genre and b.genre.lower() == genre.lower()]
         if q:
             result = [b for b in result if q.lower() in b.title.lower()]
-        return [with_stats(b) for b in result[offset : offset + limit]]
+        return conditional(request, [with_stats(b) for b in result[offset : offset + limit]])
 
     @app.get("/genres")
     def list_genres() -> list[dict[str, str | int]]:
@@ -203,10 +220,10 @@ li span{{color:#666}}
         return [with_stats(b) for b in books.values() if b.stock <= threshold]
 
     @app.get("/books/{book_id}", response_model=Book)
-    def get_book(book_id: int) -> Book:
+    def get_book(book_id: int, request: Request) -> Response:
         if book_id not in books:
             raise HTTPException(404, "Book not found")
-        return with_stats(books[book_id])
+        return conditional(request, with_stats(books[book_id]))
 
     @app.get("/books/{book_id}/similar", response_model=list[Book])
     def similar_books(book_id: int) -> list[Book]:

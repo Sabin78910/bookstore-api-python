@@ -83,6 +83,7 @@ jobs:
             Implement GitHub issue #${{ needs.pick.outputs.number }} ("${{ needs.pick.outputs.title }}").
             Get details with: gh issue view ${{ needs.pick.outputs.number }}
             Write tests first, then code. Run the test and lint commands from CLAUDE.md until green.
+            Never add email addresses or other personal data to files; for contact links use GitHub URLs.
             Do NOT commit, push, or create PRs — the workflow does that. Finish with a 3-line summary.
           claude_args: --max-turns 40 --allowedTools "Read,Write,Edit,Glob,Grep,Bash"
       - name: Show Claude result

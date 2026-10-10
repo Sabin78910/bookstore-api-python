@@ -1,10 +1,10 @@
 name: Weekly improvement planner
-# Every Sunday Claude reviews this repo, its closed issues and the roadmap, researches what the category
+# Every day Claude reviews this repo, its closed issues and the roadmap, researches what the category
 # leaders do, and queues at most 2 small, testable improvements as `ready` issues for the cloud agent.
 # Bounded on purpose: no new issue while 3 or more are still queued.
 on:
   schedule:
-    - cron: "20 4 * * 0"
+    - cron: "20 4 * * *"
   workflow_dispatch:
 
 permissions:

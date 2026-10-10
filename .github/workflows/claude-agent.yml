@@ -160,7 +160,8 @@ jobs:
     # GitHub often skips scheduled runs for hours, so a failed or usage-limited run restarts the
     # agent itself: it waits until the limit resets (or about an hour), then dispatches a new run.
     needs: [pick, implement]
-    if: always() && (needs.implement.result == 'failure' || needs.implement.result == 'cancelled')
+    # !cancelled(): a run cancelled on purpose must not start a timer; a timed-out job still retries.
+    if: ${{ !cancelled() && (needs.implement.result == 'failure' || needs.implement.result == 'cancelled') }}
     runs-on: ubuntu-latest
     timeout-minutes: 355
     env:

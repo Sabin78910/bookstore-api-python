@@ -823,3 +823,70 @@ def test_problem_body_request_id_matches_header(monkeypatch):
 def test_request_id_exposed_via_cors():
     r = client().get("/health", headers={"Origin": "https://sabin78910.github.io"})
     assert "X-Request-ID" in r.headers["access-control-expose-headers"]
+
+
+def _make_book(c, **over):
+    body = {"title": "T", "author": "A", "price": 10.0, "stock": 5, "genre": "g"}
+    return c.post("/books", json={**body, **over}).json()["id"]
+
+
+def test_patch_partial_update():
+    c = client()
+    bid = _make_book(c)
+    r = c.patch(f"/books/{bid}", json={"price": 12.5})
+    assert r.status_code == 200
+    assert r.headers["ETag"]
+    assert r.headers["Cache-Control"] == "no-store"
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+    body = r.json()
+    assert body["price"] == 12.5
+    assert (body["title"], body["author"], body["stock"], body["genre"]) == ("T", "A", 5, "g")
+    assert c.get(f"/books/{bid}").json()["price"] == 12.5
+
+
+def test_patch_null_clears_optional_only():
+    c = client()
+    bid = _make_book(c)
+    assert c.patch(f"/books/{bid}", json={"genre": None}).json()["genre"] is None
+    assert c.patch(f"/books/{bid}", json={"title": None}).status_code == 422
+
+
+def test_patch_empty_body_unchanged():
+    c = client()
+    bid = _make_book(c)
+    before = c.get(f"/books/{bid}").json()
+    r = c.patch(f"/books/{bid}", json={})
+    assert r.status_code == 200
+    assert r.json() == before
+
+
+def test_patch_validation_error():
+    c = client()
+    bid = _make_book(c)
+    for bad in ({"price": -1}, {"isbn": "123"}, {"title": ""}):
+        r = c.patch(f"/books/{bid}", json=bad)
+        assert r.status_code == 422
+        assert r.headers["content-type"].startswith("application/problem+json")
+
+
+def test_patch_isbn_normalized_and_conflict():
+    c = client()
+    a = _make_book(c, isbn="9780306406157")
+    b = _make_book(c)
+    assert c.patch(f"/books/{b}", json={"isbn": "978-0-306-40615-7"}).status_code == 409
+    assert c.patch(f"/books/{a}", json={"isbn": "978-0-306-40615-7"}).status_code == 200
+
+
+def test_patch_404():
+    r = client().patch("/books/999", json={"price": 1})
+    assert r.status_code == 404
+    assert r.headers["content-type"].startswith("application/problem+json")
+
+
+def test_patch_requires_api_key(monkeypatch):
+    monkeypatch.setenv("API_KEY", "k")
+    c = client()
+    r = c.patch("/books/1", json={"price": 1})
+    assert r.status_code == 401
+    assert r.headers["content-type"].startswith("application/problem+json")
+    assert c.patch("/books/1", json={}, headers={"X-API-Key": "k"}).status_code == 404

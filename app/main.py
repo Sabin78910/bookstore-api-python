@@ -16,7 +16,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -48,6 +48,29 @@ class BookIn(BaseModel):
     @classmethod
     def check_isbn(cls, v: str | None) -> str | None:
         return None if v is None else normalize_isbn(v)
+
+
+class BookPatch(BaseModel):
+    """Merge-patch body: only supplied fields change; null clears optional fields."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    author: str | None = Field(default=None, min_length=1, max_length=100)
+    price: float | None = Field(default=None, ge=0)
+    stock: int | None = Field(default=None, ge=0)
+    genre: str | None = Field(default=None, min_length=1, max_length=50)
+    isbn: str | None = None
+
+    @field_validator("isbn")
+    @classmethod
+    def check_isbn(cls, v: str | None) -> str | None:
+        return None if v is None else normalize_isbn(v)
+
+    @model_validator(mode="after")
+    def required_not_null(self) -> "BookPatch":
+        for name in ("title", "author", "price", "stock"):
+            if name in self.model_fields_set and getattr(self, name) is None:
+                raise ValueError(f"{name} cannot be null")
+        return self
 
 
 class Book(BookIn):
@@ -176,7 +199,7 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
     @app.middleware("http")
     async def require_api_key(request: Request, call_next):
         key = os.environ.get("API_KEY")
-        if key and request.method in {"POST", "PUT", "DELETE"}:
+        if key and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             given = request.headers.get("X-API-Key", "")
             if not secrets.compare_digest(given.encode(), key.encode()):
                 return problem(401, "Invalid or missing API key")
@@ -187,7 +210,7 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
-        if request.method in {"POST", "PUT", "DELETE"}:
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             response.headers["Cache-Control"] = "no-store"
         if request.url.path not in {"/docs", "/redoc"}:
             response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
@@ -413,6 +436,20 @@ li span{{color:#666}}
         check_isbn_free(data.isbn, exclude=book_id)
         books[book_id] = Book(id=book_id, **data.model_dump())
         return with_stats(books[book_id])
+
+    @app.patch("/books/{book_id}", response_model=Book)
+    def patch_book(book_id: int, data: BookPatch) -> Response:
+        if book_id not in books:
+            raise HTTPException(404, "Book not found")
+        changes = data.model_dump(exclude_unset=True)
+        if changes.get("isbn"):
+            check_isbn_free(changes["isbn"], exclude=book_id)
+        books[book_id] = books[book_id].model_copy(update=changes)
+        body = json.dumps(
+            jsonable_encoder(with_stats(books[book_id])), separators=(",", ":"), ensure_ascii=False
+        ).encode()
+        etag = '"' + hashlib.sha256(body).hexdigest() + '"'
+        return Response(body, media_type="application/json", headers={"ETag": etag})
 
     @app.post("/books/{book_id}/sell", response_model=Book)
     def sell(book_id: int, qty: int = Query(default=1, ge=1)) -> Book:

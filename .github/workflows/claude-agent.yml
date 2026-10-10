@@ -98,6 +98,11 @@ jobs:
           git config user.name "claude-agent"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
+          # Move the changes onto the latest main: workflow files pushed to main during the run would
+          # otherwise count as agent edits, which GITHUB_TOKEN is not allowed to push.
+          if ! git diff --cached --quiet; then
+            git stash -q && git fetch -q origin main && git checkout -q -B "agent/issue-$N" origin/main && git stash pop -q && git add -A
+          fi
           if git diff --cached --quiet; then
             gh issue edit "$N" --remove-label in-progress --add-label needs-human
             gh issue comment "$N" -b "Agent finished without code changes — needs a human look."

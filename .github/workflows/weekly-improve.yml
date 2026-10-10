@@ -1,0 +1,52 @@
+name: Weekly improvement planner
+# Every Sunday Claude reviews this repo, its closed issues and the roadmap, researches what the category
+# leaders do, and queues at most 2 small, testable improvements as `ready` issues for the cloud agent.
+# Bounded on purpose: no new issue while 3 or more are still queued.
+on:
+  schedule:
+    - cron: "20 4 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  actions: write
+  id-token: write
+
+concurrency:
+  group: weekly-improve
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip if the queue is already full
+        id: queue
+        run: echo "open=$(gh issue list --state open --label ready --json number --jq length)" >> "$GITHUB_OUTPUT"
+      - name: Plan improvements
+        if: steps.queue.outputs.open < 3
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          allowed_bots: "github-actions"
+          prompt: |
+            You are the product lead for this repo. Read CLAUDE.md and README.md, skim the code structure, and list
+            recent issues (gh issue list --state all -L 60) so you do not repeat past work.
+            Use web search to check what the top-ranked apps in this category do that this one does not yet do
+            (features, polish, rewarding moments that respect users, accessibility, performance, security).
+            Then open AT MOST 2 issues, each small enough for one PR under ~300 changed lines, with this body:
+            ## Goal / ## Why (research, with the source URL) / ## Acceptance criteria (checkboxes, including tests) / ## Out of scope.
+            Create them with: gh issue create --label ready --title "..." --body "..."
+            Rules: no duplicates of open or closed issues; no new dependencies, permissions, accounts, secrets or
+            paid services; no dark patterns; for Android apps never add the INTERNET permission. Do not change code.
+          claude_args: --max-turns 30 --allowedTools "Read,Glob,Grep,WebSearch,WebFetch,Bash(gh issue list:*),Bash(gh issue view:*),Bash(gh issue create:*),Bash(ls:*)"
+      - name: Start the agent
+        if: always() && steps.queue.outputs.open < 3
+        run: |
+          [ "$(gh issue list --state open --label ready --json number --jq length)" != "0" ] && gh workflow run claude-agent.yml || true

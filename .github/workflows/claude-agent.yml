@@ -3,7 +3,7 @@ name: Claude agent (cloud)
 # AI developer that runs on GitHub, laptop not needed.
 # Picks the oldest issue labeled `ready`, implements it with tests, opens a PR.
 # If the Claude usage limit is hit, the issue goes back to `ready` and the next
-# scheduled run (after the limit resets) continues automatically.
+# hourly run after the limit resets continues automatically.
 # Needs repo secret CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`, uses your Claude Pro plan).
 on:
   schedule:

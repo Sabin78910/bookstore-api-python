@@ -6,7 +6,9 @@ import os
 import re
 import secrets
 import time
+import uuid
 from collections import OrderedDict
+from contextvars import ContextVar
 from http import HTTPStatus
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -16,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.base import BaseHTTPMiddleware
 
 
 def normalize_isbn(value: str) -> str:
@@ -63,6 +66,10 @@ class Review(ReviewIn):
     book_id: int
 
 
+REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
+
+
 def problem(
     status: int, detail: str, headers: dict[str, str] | None = None, **extra: object
 ) -> JSONResponse:
@@ -74,6 +81,8 @@ def problem(
         "detail": detail,
         **extra,
     }
+    if (rid := request_id_var.get()) is not None:
+        body["request_id"] = rid
     return JSONResponse(
         jsonable_encoder(body),
         status_code=status,
@@ -207,8 +216,23 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
             "RateLimit-Limit",
             "RateLimit-Remaining",
             "RateLimit-Reset",
+            "X-Request-ID",
         ],
     )
+
+    async def request_id(request: Request, call_next):
+        given = request.headers.get("X-Request-ID", "")
+        rid = given if REQUEST_ID_RE.fullmatch(given) else str(uuid.uuid4())
+        token = request_id_var.set(rid)
+        try:
+            response = await call_next(request)
+        finally:
+            request_id_var.reset(token)
+        response.headers["X-Request-ID"] = rid
+        return response
+
+    # added last so it is outermost and covers every response
+    app.add_middleware(BaseHTTPMiddleware, dispatch=request_id)
 
     books: dict[int, Book] = {}
     counter = {"next": 1}

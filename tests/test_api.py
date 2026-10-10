@@ -760,3 +760,66 @@ def test_idempotency_store_evicts_oldest(monkeypatch):
         == "true"
     )
     assert len(c.get("/books").json()) == 4
+
+
+def test_request_id_generated_and_echoed():
+    import uuid
+
+    c = client()
+    generated = c.get("/health").headers["X-Request-ID"]
+    assert uuid.UUID(generated).version == 4
+    r = c.get("/health", headers={"X-Request-ID": "abc.DEF_123-x"})
+    assert r.headers["X-Request-ID"] == "abc.DEF_123-x"
+
+
+def test_request_id_invalid_replaced():
+    import uuid
+
+    c = client()
+    for bad in ["has space", "a" * 65, "semi;colon"]:
+        rid = c.get("/health", headers={"X-Request-ID": bad}).headers["X-Request-ID"]
+        assert rid != bad
+        uuid.UUID(rid)
+    assert c.get("/health", headers={"X-Request-ID": "a" * 64}).headers["X-Request-ID"] == "a" * 64
+
+
+def test_request_id_on_all_statuses(monkeypatch):
+    c = client()
+    created = c.post("/books", json={"title": "T", "author": "A", "price": 1})
+    assert created.status_code == 201 and "X-Request-ID" in created.headers
+    first = c.get("/books/1")
+    etag = first.headers["ETag"]
+    r304 = c.get("/books/1", headers={"If-None-Match": etag})
+    assert r304.status_code == 304 and "X-Request-ID" in r304.headers
+    assert "X-Request-ID" in c.get("/books/99").headers
+    assert "X-Request-ID" in c.get("/books?limit=0").headers
+    monkeypatch.setenv("API_KEY", "k")
+    r401 = c.post("/books", json={})
+    assert r401.status_code == 401 and "X-Request-ID" in r401.headers
+    monkeypatch.delenv("API_KEY")
+    limited = TestClient(create_app(rate_limit=1))
+    limited.get("/books")
+    r429 = limited.get("/books")
+    assert r429.status_code == 429 and "X-Request-ID" in r429.headers
+
+
+def test_problem_body_request_id_matches_header(monkeypatch):
+    c = client()
+    hdr = {"X-Request-ID": "req-1"}
+    for r in [c.get("/books/99", headers=hdr), c.get("/books?limit=0", headers=hdr)]:
+        assert r.headers["X-Request-ID"] == "req-1"
+        assert r.json()["request_id"] == "req-1"
+    monkeypatch.setenv("API_KEY", "k")
+    r = c.post("/books", json={}, headers=hdr)
+    assert r.status_code == 401 and r.json()["request_id"] == "req-1"
+    monkeypatch.delenv("API_KEY")
+    limited = TestClient(create_app(rate_limit=1))
+    limited.get("/books")
+    r = limited.get("/books")
+    assert r.status_code == 429
+    assert r.json()["request_id"] == r.headers["X-Request-ID"]
+
+
+def test_request_id_exposed_via_cors():
+    r = client().get("/health", headers={"Origin": "https://sabin78910.github.io"})
+    assert "X-Request-ID" in r.headers["access-control-expose-headers"]

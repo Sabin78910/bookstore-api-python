@@ -890,3 +890,53 @@ def test_patch_requires_api_key(monkeypatch):
     assert r.status_code == 401
     assert r.headers["content-type"].startswith("application/problem+json")
     assert c.patch("/books/1", json={}, headers={"X-API-Key": "k"}).status_code == 404
+
+
+def _big_book(size: int) -> bytes:
+    import json
+
+    base = {"title": "T", "author": "A", "price": 1}
+    pad = size - len(json.dumps({**base, "genre": ""}).encode())
+    return json.dumps({**base, "genre": "x" * pad}).encode()
+
+
+def test_oversized_content_length_returns_413():
+    from app.main import MAX_BODY_BYTES
+
+    r = client().post(
+        "/books",
+        content=b"x" * (MAX_BODY_BYTES + 1),
+        headers={"Content-Type": "application/json", "X-Request-ID": "rid-1"},
+    )
+    assert r.status_code == 413
+    assert r.headers["content-type"].startswith("application/problem+json")
+    assert r.headers["X-Request-ID"] == "rid-1"
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+    body = r.json()
+    assert body["status"] == 413
+    assert body["request_id"] == "rid-1"
+
+
+def test_oversized_chunked_body_returns_413():
+    from app.main import MAX_BODY_BYTES
+
+    def chunks():
+        for _ in range(MAX_BODY_BYTES // 1024 + 2):
+            yield b"x" * 1024
+
+    r = client().put("/books/1", content=chunks(), headers={"Content-Type": "application/json"})
+    assert r.status_code == 413
+    assert r.json()["request_id"] == r.headers["X-Request-ID"]
+
+
+def test_body_under_cap_and_get_unaffected():
+    from app.main import MAX_BODY_BYTES
+
+    c = client()
+    payload = _big_book(MAX_BODY_BYTES)
+    assert len(payload) == MAX_BODY_BYTES
+    assert "x" * 1000 in payload.decode()
+    # genre exceeds its own max_length, so validation (422) proves the body was parsed
+    r = c.post("/books", content=payload, headers={"Content-Type": "application/json"})
+    assert r.status_code == 422
+    assert c.get("/books").status_code == 200

@@ -118,6 +118,56 @@ IDEMPOTENCY_MAX_ENTRIES = 1000
 IDEMPOTENCY_KEY_MAX_LEN = 255
 IDEMPOTENT_PATHS = re.compile(r"^/books(/\d+/sell)?$")
 
+MAX_BODY_BYTES = 64 * 1024
+BODY_METHODS = {"POST", "PUT", "PATCH"}
+
+
+class BodyTooLarge(Exception):
+    pass
+
+
+class BodyLimitMiddleware:
+    """Reject bodies over MAX_BODY_BYTES with 413, by Content-Length or while streaming."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope["method"] not in BODY_METHODS:
+            return await self.app(scope, receive, send)
+        length = dict(scope["headers"]).get(b"content-length", b"")
+        if length.isdigit() and int(length) > MAX_BODY_BYTES:
+            return await self._reject(scope, receive, send)
+        seen = 0
+        exceeded = False
+
+        async def limited():
+            nonlocal seen, exceeded
+            message = await receive()
+            if message["type"] == "http.request":
+                seen += len(message.get("body", b""))
+                if seen > MAX_BODY_BYTES:
+                    exceeded = True
+                    raise BodyTooLarge
+            return message
+
+        async def guarded_send(message):
+            # FastAPI turns the read error into a 400; swap it for the 413
+            if not exceeded:
+                await send(message)
+
+        try:
+            await self.app(scope, limited, guarded_send)
+        except BodyTooLarge:
+            pass
+        if exceeded:
+            await self._reject(scope, receive, send)
+
+    async def _reject(self, scope, receive, send):
+        response = problem(413, f"Request body exceeds {MAX_BODY_BYTES} bytes")
+        await response(scope, receive, send)
+
+
 SORT_FIELDS = ("title", "author", "price")
 
 
@@ -204,6 +254,8 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
             if not secrets.compare_digest(given.encode(), key.encode()):
                 return problem(401, "Invalid or missing API key")
         return await call_next(request)
+
+    app.add_middleware(BodyLimitMiddleware)
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):

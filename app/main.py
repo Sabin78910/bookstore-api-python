@@ -3,8 +3,10 @@ import html
 import json
 import math
 import os
+import re
 import secrets
 import time
+from collections import OrderedDict
 from http import HTTPStatus
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -80,6 +82,10 @@ def problem(
     )
 
 
+IDEMPOTENCY_MAX_ENTRIES = 1000
+IDEMPOTENCY_KEY_MAX_LEN = 255
+IDEMPOTENT_PATHS = re.compile(r"^/books(/\d+/sell)?$")
+
 SORT_FIELDS = ("title", "author", "price")
 
 
@@ -94,6 +100,49 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
             "RateLimit-Remaining": str(max(0, remaining)),
             "RateLimit-Reset": str(reset),
         }
+
+    # key -> (fingerprint, status, body, content-type); oldest evicted first
+    idempotency: OrderedDict[str, tuple[str, int, bytes, str | None]] = OrderedDict()
+
+    @app.middleware("http")
+    async def idempotency_keys(request: Request, call_next):
+        key = request.headers.get("Idempotency-Key")
+        if key is None or request.method != "POST" or not IDEMPOTENT_PATHS.match(request.url.path):
+            return await call_next(request)
+        if not (1 <= len(key) <= IDEMPOTENCY_KEY_MAX_LEN and all(" " <= c <= "~" for c in key)):
+            return problem(
+                422,
+                f"Idempotency-Key must be 1-{IDEMPOTENCY_KEY_MAX_LEN} printable ASCII characters",
+            )
+        raw = request.url.path + "?" + request.url.query + "\n"
+        fingerprint = hashlib.sha256(raw.encode() + await request.body()).hexdigest()
+        saved = idempotency.get(key)
+        if saved is not None:
+            if saved[0] != fingerprint:
+                return problem(422, "Idempotency-Key was already used with a different request")
+            return Response(
+                saved[2],
+                status_code=saved[1],
+                media_type=saved[3],
+                headers={"Idempotent-Replayed": "true"},
+            )
+        response = await call_next(request)
+        if response.status_code >= 500:
+            return response
+        body = b"".join([chunk async for chunk in response.body_iterator])
+        idempotency[key] = (
+            fingerprint,
+            response.status_code,
+            body,
+            response.headers.get("content-type"),
+        )
+        while len(idempotency) > IDEMPOTENCY_MAX_ENTRIES:
+            idempotency.popitem(last=False)
+        return Response(
+            body,
+            status_code=response.status_code,
+            headers={k: v for k, v in response.headers.items() if k != "content-length"},
+        )
 
     @app.middleware("http")
     async def limit_requests(request: Request, call_next):

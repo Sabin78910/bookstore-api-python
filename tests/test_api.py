@@ -685,3 +685,78 @@ def test_rate_limit_headers_coexist_with_etag_304_and_pagination():
     assert second.status_code == 304
     assert second.headers["RateLimit-Remaining"] == "8"
     assert second.headers["ETag"] == first.headers["ETag"]
+
+
+BOOK = {"title": "Dune", "author": "Herbert", "price": 9.5, "stock": 5}
+
+
+def test_idempotent_create_replays_first_response():
+    c = client()
+    h = {"Idempotency-Key": "abc-1"}
+    r1 = c.post("/books", json=BOOK, headers=h)
+    r2 = c.post("/books", json=BOOK, headers=h)
+    assert r1.status_code == r2.status_code == 201
+    assert r2.json() == r1.json()
+    assert "Idempotent-Replayed" not in r1.headers
+    assert r2.headers["Idempotent-Replayed"] == "true"
+    assert len(c.get("/books").json()) == 1
+
+
+def test_idempotent_sell_decrements_once():
+    c = client()
+    book_id = c.post("/books", json=BOOK).json()["id"]
+    h = {"Idempotency-Key": "sell-1"}
+    r1 = c.post(f"/books/{book_id}/sell?qty=2", headers=h)
+    r2 = c.post(f"/books/{book_id}/sell?qty=2", headers=h)
+    assert r2.json() == r1.json()
+    assert r2.headers["Idempotent-Replayed"] == "true"
+    assert c.get(f"/books/{book_id}").json()["stock"] == 3
+
+
+def test_idempotency_key_reuse_with_different_body_or_path_is_422():
+    c = client()
+    h = {"Idempotency-Key": "k"}
+    assert c.post("/books", json=BOOK, headers=h).status_code == 201
+    r = c.post("/books", json={**BOOK, "title": "Other"}, headers=h)
+    _assert_problem(r, 422, "Unprocessable Content")
+    r = c.post("/books/1/sell", headers=h)
+    _assert_problem(r, 422, "Unprocessable Content")
+    assert len(c.get("/books").json()) == 1
+
+
+def test_idempotency_key_validation():
+    c = client()
+    for key in ["x" * 256, "bad\x01key", ""]:
+        r = c.post("/books", json=BOOK, headers={"Idempotency-Key": key})
+        _assert_problem(r, 422, "Unprocessable Content")
+    assert c.get("/books").json() == []
+    ok = c.post("/books", json=BOOK, headers={"Idempotency-Key": "x" * 255})
+    assert ok.status_code == 201
+
+
+def test_no_idempotency_key_unchanged():
+    c = client()
+    assert c.post("/books", json=BOOK).status_code == 201
+    r = c.post("/books", json=BOOK)
+    assert r.status_code == 201 and "Idempotent-Replayed" not in r.headers
+    assert len(c.get("/books").json()) == 2
+
+
+def test_idempotency_store_evicts_oldest(monkeypatch):
+    import app.main as m
+
+    monkeypatch.setattr(m, "IDEMPOTENCY_MAX_ENTRIES", 2)
+    c = client()
+    for k in ("a", "b", "c"):
+        c.post("/books", json=BOOK, headers={"Idempotency-Key": k})
+    assert len(c.get("/books").json()) == 3
+    # "a" was evicted, so it runs again; "c" is still replayed
+    assert (
+        "Idempotent-Replayed"
+        not in c.post("/books", json=BOOK, headers={"Idempotency-Key": "a"}).headers
+    )
+    assert (
+        c.post("/books", json=BOOK, headers={"Idempotency-Key": "c"}).headers["Idempotent-Replayed"]
+        == "true"
+    )
+    assert len(c.get("/books").json()) == 4

@@ -18,6 +18,8 @@ GET /health · GET /books?author=&sort=-price (sort: title, author, price; respo
 
 Idempotency: `POST /books` and `POST /books/{id}/sell` accept an optional `Idempotency-Key` header (1-255 printable ASCII chars, else 422). A repeat with the same key, path and body returns the first response with `Idempotent-Replayed: true` and does not repeat the side effect; reusing a key for a different path/body is 422. In-memory store, capped at 1000 keys (oldest evicted), lost on restart.
 
+Body size: POST/PUT/PATCH bodies over 64 KiB (65536 bytes) are rejected with `413` problem+json, by `Content-Length` or while streaming (chunked).
+
 Request IDs: every response carries `X-Request-ID`. A client value matching `^[A-Za-z0-9._-]{1,64}$` is echoed back; otherwise a UUID4 is generated. problem+json bodies include the same value as `request_id`. Use a new ID per retry (it is separate from `Idempotency-Key`).
 
 Write protection: when the `API_KEY` env var is set, POST/PUT/PATCH/DELETE require an `X-API-Key` header with that value (else 401); reads stay public. Render generates `API_KEY` via `render.yaml` (see the service's Environment tab). Unset locally = writes open.

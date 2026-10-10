@@ -79,6 +79,9 @@ def problem(
     )
 
 
+SORT_FIELDS = ("title", "author", "price")
+
+
 def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
     app = FastAPI(title="Bookstore API", version="1.0.0")
     started = time.monotonic()
@@ -214,7 +217,11 @@ li span{{color:#666}}
         q: str | None = Query(default=None),
         limit: int = Query(default=20, ge=1, le=100),
         offset: int = Query(default=0, ge=0),
+        sort: str | None = Query(default=None, description="title, author or price; '-' = desc"),
     ) -> Response:
+        field = (sort or "").removeprefix("-")
+        if sort is not None and field not in SORT_FIELDS:
+            raise HTTPException(422, f"Invalid sort field; allowed: {', '.join(SORT_FIELDS)}")
         result = list(books.values())
         if author:
             result = [b for b in result if author.lower() in b.author.lower()]
@@ -222,6 +229,11 @@ li span{{color:#666}}
             result = [b for b in result if b.genre and b.genre.lower() == genre.lower()]
         if q:
             result = [b for b in result if q.lower() in b.title.lower()]
+        if sort:
+            result.sort(
+                key=lambda b: v.lower() if isinstance(v := getattr(b, field), str) else v,
+                reverse=sort.startswith("-"),
+            )
         return conditional(request, [with_stats(b) for b in result[offset : offset + limit]])
 
     @app.get("/genres")

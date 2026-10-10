@@ -454,3 +454,61 @@ def test_problem_json_401(monkeypatch):
     r = client().post("/books", json={"title": "a", "author": "b", "price": 1})
     body = _assert_problem(r, 401, "Unauthorized")
     assert body["detail"] == "Invalid or missing API key"
+
+
+def _seed_sort():
+    c = client()
+    for t, a, p, g in [
+        ("Banana", "Zed", 20, "x"),
+        ("apple", "Amy", 10, "x"),
+        ("Cherry", "Bob", 30, "y"),
+        ("Date", "Amy", 10, "x"),
+    ]:
+        c.post("/books", json={"title": t, "author": a, "price": p, "genre": g})
+    return c
+
+
+def _titles(r):
+    return [b["title"] for b in r.json()]
+
+
+def test_sort_asc_desc():
+    c = _seed_sort()
+    assert _titles(c.get("/books", params={"sort": "price"})) == [
+        "apple",
+        "Date",
+        "Banana",
+        "Cherry",
+    ]
+    assert _titles(c.get("/books", params={"sort": "-price"})) == [
+        "Cherry",
+        "Banana",
+        "apple",
+        "Date",
+    ]
+    assert _titles(c.get("/books", params={"sort": "title"})) == [
+        "apple",
+        "Banana",
+        "Cherry",
+        "Date",
+    ]
+    assert _titles(c.get("/books", params={"sort": "-author"}))[0] == "Banana"
+
+
+def test_sort_invalid_field_is_problem_422():
+    r = _seed_sort().get("/books", params={"sort": "year"})
+    assert r.status_code == 422
+    assert r.headers["content-type"].startswith("application/problem+json")
+    assert _seed_sort().get("/books", params={"sort": "-"}).status_code == 422
+
+
+def test_sort_with_filters_and_pagination():
+    c = _seed_sort()
+    r = c.get("/books", params={"sort": "-price", "genre": "x", "limit": 2, "offset": 1})
+    assert _titles(r) == ["apple", "Date"]
+    r = c.get("/books", params={"sort": "price", "q": "a", "limit": 2})
+    assert _titles(r) == ["apple", "Date"]
+
+
+def test_no_sort_keeps_insertion_order():
+    assert _titles(_seed_sort().get("/books")) == ["Banana", "apple", "Cherry", "Date"]

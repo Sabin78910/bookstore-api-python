@@ -3,11 +3,12 @@ name: Claude agent (cloud)
 # AI developer that runs on GitHub, laptop not needed.
 # Picks the oldest issue labeled `ready`, implements it with tests, opens a PR.
 # If the Claude usage limit is hit, the issue goes back to `ready` and the next
-# hourly run after the limit resets continues automatically.
+# run restarts itself once the limit resets (retry-timer job).
 # Needs repo secret CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`, uses your Claude Pro plan).
 on:
   schedule:
     - cron: "49 * * * *"
+    - cron: "19 * * * *"
   issues:
     types: [labeled]
   workflow_dispatch:
@@ -122,13 +123,19 @@ jobs:
       - name: Retry later (usage limit or failure)
         if: failure() || cancelled()
         run: |
+          # A Claude usage limit is not the task's fault, so it never counts toward the 3-failure limit.
+          if grep -qiE "^ *429|hit your .*limit|usage limit" <<<"${CLAUDE_MSG:-}"; then
+            gh issue edit "$N" --remove-label in-progress --add-label ready
+            gh issue comment "$N" -b "Paused: Claude usage limit (${CLAUDE_MSG}). The agent restarts itself after the reset. Logs: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            exit 0
+          fi
           FAILS=$(gh issue view "$N" --json comments --jq '[.comments[].body | select(startswith("Agent run failed"))] | length')
           if [ "$FAILS" -ge 3 ]; then
             gh issue edit "$N" --remove-label in-progress --add-label needs-human
             gh issue comment "$N" -b "Agent run failed 3 times — handing to a human. Logs: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           else
             gh issue edit "$N" --remove-label in-progress --add-label ready
-            gh issue comment "$N" -b "Agent run failed: ${CLAUDE_MSG:-unknown}. Will retry automatically on the next schedule. Logs: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            gh issue comment "$N" -b "Agent run failed: ${CLAUDE_MSG:-unknown}. Will retry automatically in about an hour. Logs: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           fi
 
   continue:
@@ -144,3 +151,27 @@ jobs:
           LEFT=$(gh issue list -R "$GITHUB_REPOSITORY" --label ready --state open --json number --jq length)
           if [ "$LEFT" -gt 0 ]; then gh workflow run claude-agent.yml -R "$GITHUB_REPOSITORY" --ref main && echo "▶ $LEFT task(s) left — started next run"; fi
 
+  retry-timer:
+    # GitHub often skips scheduled runs for hours, so a failed or usage-limited run restarts the
+    # agent itself: it waits until the limit resets (or about an hour), then dispatches a new run.
+    needs: [pick, implement]
+    if: always() && (needs.implement.result == 'failure' || needs.implement.result == 'cancelled')
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    env:
+      GH_TOKEN: ${{ github.token }}
+      N: ${{ needs.pick.outputs.number }}
+    steps:
+      - run: |
+          MSG=$(gh issue view "$N" -R "$GITHUB_REPOSITORY" --json comments --jq '.comments[-1].body' 2>/dev/null || true)
+          WAIT=3300
+          T=$(grep -oE 'resets [^(.]*' <<<"$MSG" | head -1 | sed 's/^resets //; s/[·,]//g')
+          if [ -n "$T" ] && TS=$(date -u -d "$T" +%s 2>/dev/null); then
+            NOW=$(date +%s); [ "$TS" -le "$NOW" ] && TS=$((TS + 86400))
+            WAIT=$((TS - NOW + 120))
+          fi
+          [ "$WAIT" -gt 20700 ] && WAIT=20700
+          echo "Waiting $((WAIT / 60)) min, then restarting the agent"
+          sleep "$WAIT"
+          LEFT=$(gh issue list -R "$GITHUB_REPOSITORY" --label ready --state open --json number --jq length)
+          if [ "$LEFT" -gt 0 ]; then gh workflow run claude-agent.yml -R "$GITHUB_REPOSITORY" --ref main; else echo "Nothing queued"; fi

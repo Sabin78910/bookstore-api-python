@@ -49,4 +49,5 @@ jobs:
       - name: Start the agent
         if: always() && steps.queue.outputs.open < 3
         run: |
-          [ "$(gh issue list --state open --label ready --json number --jq length)" != "0" ] && gh workflow run claude-agent.yml || true
+          sleep 15  # the issue list can lag right after creation; the agent exits fast if nothing is queued
+          gh workflow run claude-agent.yml

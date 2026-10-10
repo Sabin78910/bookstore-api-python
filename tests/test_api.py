@@ -659,3 +659,29 @@ def test_docs_have_no_csp():
     assert r.status_code == 200
     assert "Content-Security-Policy" not in r.headers
     assert r.headers["X-Content-Type-Options"] == "nosniff"
+
+
+def test_rate_limit_headers_on_200_and_429():
+    c = TestClient(create_app(rate_limit=2, rate_window=60))
+    r1 = c.get("/health")
+    r2 = c.get("/health")
+    r3 = c.get("/health")
+    assert r1.status_code == r2.status_code == 200
+    assert [r.headers["RateLimit-Limit"] for r in (r1, r2, r3)] == ["2"] * 3
+    assert [r.headers["RateLimit-Remaining"] for r in (r1, r2, r3)] == ["1", "0", "0"]
+    assert r3.status_code == 429
+    for r in (r1, r2, r3):
+        reset = r.headers["RateLimit-Reset"]
+        assert reset.isdigit() and 0 <= int(reset) <= 60
+    assert int(r3.headers["Retry-After"]) >= 1
+
+
+def test_rate_limit_headers_coexist_with_etag_304_and_pagination():
+    c = TestClient(create_app(rate_limit=10, rate_window=60))
+    first = c.get("/books")
+    assert "X-Total-Count" in first.headers and "ETag" in first.headers
+    assert first.headers["RateLimit-Remaining"] == "9"
+    second = c.get("/books", headers={"If-None-Match": first.headers["ETag"]})
+    assert second.status_code == 304
+    assert second.headers["RateLimit-Remaining"] == "8"
+    assert second.headers["ETag"] == first.headers["ETag"]

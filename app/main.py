@@ -1,6 +1,7 @@
 import hashlib
 import html
 import json
+import math
 import os
 import secrets
 import time
@@ -87,6 +88,13 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
     started = time.monotonic()
     hits: dict[str, list[float]] = {}
 
+    def rate_headers(remaining: int, reset: int) -> dict[str, str]:
+        return {
+            "RateLimit-Limit": str(rate_limit),
+            "RateLimit-Remaining": str(max(0, remaining)),
+            "RateLimit-Reset": str(reset),
+        }
+
     @app.middleware("http")
     async def limit_requests(request: Request, call_next):
         ip = request.client.host if request.client else "unknown"
@@ -94,11 +102,18 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
         recent = [t for t in hits.get(ip, []) if now - t < rate_window]
         if len(recent) >= rate_limit:
             hits[ip] = recent
-            retry = max(1, int(rate_window - (now - recent[0])) + 1)
-            return problem(429, "Rate limit exceeded", {"Retry-After": str(retry)})
+            reset = max(0, math.ceil(rate_window - (now - recent[0])))
+            return problem(
+                429,
+                "Rate limit exceeded",
+                {**rate_headers(0, reset), "Retry-After": str(max(1, reset))},
+            )
         recent.append(now)
         hits[ip] = recent
-        return await call_next(request)
+        reset = max(0, math.ceil(rate_window - (now - recent[0])))
+        response = await call_next(request)
+        response.headers.update(rate_headers(rate_limit - len(recent), reset))
+        return response
 
     @app.middleware("http")
     async def require_api_key(request: Request, call_next):
@@ -137,7 +152,13 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
         CORSMiddleware,
         allow_origins=origins,
         allow_methods=["GET", "HEAD", "OPTIONS"],
-        expose_headers=["X-Total-Count", "Link"],
+        expose_headers=[
+            "X-Total-Count",
+            "Link",
+            "RateLimit-Limit",
+            "RateLimit-Remaining",
+            "RateLimit-Reset",
+        ],
     )
 
     books: dict[int, Book] = {}

@@ -379,3 +379,40 @@ def test_cors_origins_from_env(monkeypatch):
     assert r.headers["access-control-allow-origin"] == "https://b.example"
     r = client().get("/health", headers={"Origin": "https://sabin78910.github.io"})
     assert "access-control-allow-origin" not in r.headers
+
+
+def _etag_book(c: TestClient) -> int:
+    return c.post("/books", json={"title": "T", "author": "A", "price": 5, "stock": 3}).json()["id"]
+
+
+def test_etag_and_304_on_book_and_list():
+    c = client()
+    bid = _etag_book(c)
+    for url in (f"/books/{bid}", "/books"):
+        r = c.get(url)
+        etag = r.headers["ETag"]
+        assert etag.startswith('"') and r.status_code == 200
+        r2 = c.get(url, headers={"If-None-Match": etag})
+        assert r2.status_code == 304 and r2.content == b""
+        assert r2.headers["ETag"] == etag
+        assert c.get(url, headers={"If-None-Match": '"nope"'}).status_code == 200
+        assert c.get(url, headers={"If-None-Match": f'"x", {etag}'}).status_code == 304
+
+
+def test_etag_changes_after_update_sell_delete():
+    c = client()
+    bid = _etag_book(c)
+    url = f"/books/{bid}"
+    etag = c.get(url).headers["ETag"]
+    c.put(url, json={"title": "T2", "author": "A", "price": 5, "stock": 3})
+    r = c.get(url, headers={"If-None-Match": etag})
+    assert r.status_code == 200 and r.headers["ETag"] != etag
+    etag = r.headers["ETag"]
+    c.post(f"{url}/sell")
+    r = c.get(url, headers={"If-None-Match": etag})
+    assert r.status_code == 200 and r.headers["ETag"] != etag
+    list_etag = c.get("/books").headers["ETag"]
+    c.delete(url)
+    assert c.get(url, headers={"If-None-Match": etag}).status_code == 404
+    r = c.get("/books", headers={"If-None-Match": list_etag})
+    assert r.status_code == 200 and r.headers["ETag"] != list_etag

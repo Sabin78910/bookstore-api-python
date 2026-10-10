@@ -171,6 +171,114 @@ class BodyLimitMiddleware:
 SORT_FIELDS = ("title", "author", "price")
 
 
+LANDING_HTML = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bookstore API</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,system-ui,sans-serif;color:#e8e8f0;min-height:100vh;
+background:radial-gradient(circle at 20% 0,#2a2350,#0e0f1a 60%) fixed}
+a{color:#ffd166}
+.hero{padding:56px 24px 24px;text-align:center}
+.hero h1{margin:0 0 8px;font-size:2.5rem}
+main{max-width:960px;margin:0 auto;padding:24px}
+.glass{background:#ffffff12;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+border:1px solid #ffffff25;border-radius:12px;padding:16px}
+input,select,textarea,button{font:inherit;color:inherit;background:#00000040;
+border:1px solid #ffffff30;border-radius:8px;padding:10px}
+button{cursor:pointer;background:#ffd166;color:#14141f;font-weight:700;border:0}
+#search{width:100%;font-size:1.1rem}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px;margin:16px 0}
+.book{cursor:pointer;padding:0;overflow:hidden;color:inherit;text-align:left}
+.cover{height:130px;display:flex;align-items:flex-end;padding:10px;font-weight:700;
+line-height:1.2;color:#fff;text-shadow:0 1px 3px #0008}
+.meta{padding:10px;font-size:.85rem;color:#c9c9d8}
+.stars{color:#ffd166}
+#status,li span{color:#a0a0b8}
+pre{background:#00000050;padding:12px;border-radius:8px;overflow:auto;max-height:320px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px}
+</style></head><body>
+<section class="hero"><h1>Bookstore API</h1>
+<p>Books, genres and reviews over REST.</p>
+<a href="/docs">Explore the API docs &rarr;</a></section>
+<main>
+<div class="glass"><input id="search" type="search" placeholder="Search books by title…"
+aria-label="Search books by title"><p id="status" aria-live="polite"></p></div>
+<div id="results" class="grid"></div>
+<h2 id="similar-title" hidden>Similar titles</h2>
+<div id="similar" class="grid"></div>
+<h2>API playground</h2>
+<div id="playground" class="glass">
+<div class="row"><select id="pg-method" aria-label="Method">
+<option>GET</option></select>
+<input id="pg-path" value="/books?limit=3" size="40" aria-label="Path">
+<button id="pg-send" type="button">Send</button></div>
+<pre id="pg-out">Response appears here.</pre></div>
+<p class="count"><b>{{COUNT}}</b> books in the catalog</p>
+<h2>Top rated</h2><ul>{{TOP}}</ul>
+<h2>Endpoints</h2><div class="cards">{{ENDPOINTS}}</div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+function hue(s) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
+function card(b) {
+  const el = document.createElement("button");
+  el.type = "button"; el.className = "glass book";
+  const cover = document.createElement("div"); cover.className = "cover";
+  const h = hue(b.title + b.author);
+  const h2 = (h + 60) % 360;
+  cover.style.background =
+    `linear-gradient(135deg,hsl(${h},60%,45%),hsl(${h2},65%,30%))`;
+  cover.textContent = b.title;
+  const meta = document.createElement("div"); meta.className = "meta";
+  const by = document.createElement("div"); by.textContent = b.author;
+  const r = document.createElement("div"); r.className = "stars";
+  r.textContent = b.average_rating == null ? "No ratings"
+    : "\\u2605".repeat(Math.round(b.average_rating)) + " " + b.average_rating;
+  meta.append(by, r); el.append(cover, meta);
+  el.addEventListener("click", () => showSimilar(b));
+  return el;
+}
+function fill(box, books) { box.replaceChildren(...books.map(card)); }
+async function api(path) {
+  const res = await fetch(path);
+  return { res, data: await res.json() };
+}
+async function search() {
+  const q = $("search").value.trim();
+  const { res, data } = await api("/books?limit=24" + (q ? "&q=" + encodeURIComponent(q) : ""));
+  $("status").textContent = res.ok
+    ? (res.headers.get("X-Total-Count") || 0) + " matching books" : "Search failed";
+  fill($("results"), res.ok ? data : []);
+}
+async function showSimilar(b) {
+  const { res, data } = await api("/books/" + b.id + "/similar");
+  $("similar-title").hidden = false;
+  $("similar-title").textContent = "Similar to " + b.title;
+  fill($("similar"), res.ok ? data.slice(0, 6) : []);
+}
+let timer;
+$("search").addEventListener("input", () => {
+  clearTimeout(timer); timer = setTimeout(search, 250);
+});
+$("pg-send").addEventListener("click", async () => {
+  const path = $("pg-path").value.trim();
+  if (!path.startsWith("/")) { $("pg-out").textContent = "Path must start with /"; return; }
+  try {
+    const res = await fetch(path, { method: $("pg-method").value });
+    const text = await res.text();
+    let body = text;
+    try { body = JSON.stringify(JSON.parse(text), null, 2); } catch (e) {}
+    $("pg-out").textContent = res.status + " " + res.statusText + "\\n\\n" + body;
+  } catch (e) { $("pg-out").textContent = "Request failed"; }
+});
+search();
+</script></body></html>"""
+
+
 def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
     app = FastAPI(title="Bookstore API", version="1.0.0")
     started = time.monotonic()
@@ -366,30 +474,11 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
                 ("GET", "/health", "Service status"),
             ]
         )
-        return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Bookstore API</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700" rel="stylesheet">
-<style>
-body{{margin:0;font-family:Inter,system-ui,sans-serif;background:#faf7f2;color:#222}}
-.hero{{background:#2b2d42;color:#fff;padding:64px 24px;text-align:center}}
-.hero h1{{margin:0 0 8px;font-size:2.5rem}}
-.hero a{{color:#ffd166}}
-main{{max-width:800px;margin:0 auto;padding:24px}}
-.count{{font-size:1.25rem}}
-li span{{color:#666}}
-.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px}}
-.card{{background:#fff;border-radius:8px;padding:16px;box-shadow:0 1px 4px #0002}}
-</style></head><body>
-<section class="hero"><h1>Bookstore API</h1>
-<p>Books, genres and reviews over REST.</p>
-<a href="/docs">Explore the API docs &rarr;</a></section>
-<main>
-<p class="count"><b>{len(books)}</b> books in the catalog</p>
-<h2>Top rated</h2><ul>{items}</ul>
-<h2>Endpoints</h2><div class="cards">{cards}</div>
-</main></body></html>"""
+        return (
+            LANDING_HTML.replace("{{COUNT}}", str(len(books)))
+            .replace("{{TOP}}", items)
+            .replace("{{ENDPOINTS}}", cards)
+        )
 
     @app.get("/health")
     def health() -> dict[str, str | float]:

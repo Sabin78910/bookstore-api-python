@@ -940,3 +940,21 @@ def test_body_under_cap_and_get_unaffected():
     r = c.post("/books", content=payload, headers={"Content-Type": "application/json"})
     assert r.status_code == 422
     assert c.get("/books").status_code == 200
+
+
+def test_landing_explorer_ui_elements():
+    text = client().get("/").text
+    assert 'id="search"' in text
+    assert 'id="results"' in text
+    assert 'id="similar"' in text
+    assert 'id="playground"' in text
+    assert "fetch(" in text
+    assert "linear-gradient" in text
+    assert "<img" not in text
+    assert "backdrop-filter" in text
+
+
+def test_landing_explorer_escapes_server_data():
+    c = client()
+    c.post("/books", json={"title": "<script>x</script>", "author": "A", "price": 1})
+    assert "<script>x</script>" not in c.get("/").text

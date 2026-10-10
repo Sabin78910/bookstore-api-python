@@ -42,10 +42,11 @@ jobs:
             (features, polish, rewarding moments that respect users, accessibility, performance, security).
             Then open AT MOST 2 issues, each small enough for one PR under ~300 changed lines, with this body:
             ## Goal / ## Why (research, with the source URL) / ## Acceptance criteria (checkboxes, including tests) / ## Out of scope.
-            Create them with: gh issue create --label ready --title "..." --body "..."
+            Save each body with the Write tool to .issue-body.md, then run the single-line command (multi-line Bash commands are blocked):
+            gh issue create --label ready --title "..." --body-file .issue-body.md
             Rules: no duplicates of open or closed issues; no new dependencies, permissions, accounts, secrets or
             paid services; no dark patterns; for Android apps never add the INTERNET permission. Do not change code.
-          claude_args: --max-turns 30 --allowedTools "Read,Glob,Grep,WebSearch,WebFetch,Bash(gh issue list:*),Bash(gh issue view:*),Bash(gh issue create:*),Bash(ls:*)"
+          claude_args: --max-turns 30 --allowedTools "Read,Write,Glob,Grep,WebSearch,WebFetch,Bash(gh issue list:*),Bash(gh issue view:*),Bash(gh issue create:*),Bash(ls:*)"
       - name: Start the agent
         if: always() && steps.queue.outputs.open < 3
         run: |

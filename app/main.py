@@ -89,6 +89,12 @@ class Review(ReviewIn):
     book_id: int
 
 
+class RatingSummary(BaseModel):
+    average: float | None
+    count: int
+    distribution: dict[str, int]
+
+
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 
@@ -622,6 +628,20 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
         if book_id not in books:
             raise HTTPException(404, "Book not found")
         return reviews.get(book_id, [])
+
+    @app.get("/books/{book_id}/ratings", response_model=RatingSummary)
+    def rating_summary(book_id: int) -> RatingSummary:
+        if book_id not in books:
+            raise HTTPException(404, "Book not found")
+        rs = reviews.get(book_id, [])
+        distribution = {str(star): 0 for star in range(1, 6)}
+        for r in rs:
+            distribution[str(r.rating)] += 1
+        return RatingSummary(
+            average=with_stats(books[book_id]).average_rating,
+            count=len(rs),
+            distribution=distribution,
+        )
 
     return app
 

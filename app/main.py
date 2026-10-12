@@ -342,6 +342,8 @@ def create_app(rate_limit: int = 100, rate_window: float = 60.0) -> FastAPI:
 
     @app.middleware("http")
     async def limit_requests(request: Request, call_next):
+        if request.method == "GET" and request.url.path == "/health":
+            return await call_next(request)
         ip = request.client.host if request.client else "unknown"
         now = time.monotonic()
         recent = [t for t in hits.get(ip, []) if now - t < rate_window]

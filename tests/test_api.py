@@ -442,8 +442,8 @@ def test_problem_json_422_keeps_field_errors():
 
 def test_problem_json_429_keeps_retry_after():
     c = TestClient(create_app(rate_limit=1))
-    c.get("/health")
-    r = c.get("/health")
+    c.get("/books")
+    r = c.get("/books")
     body = _assert_problem(r, 429, "Too Many Requests")
     assert body["detail"] == "Rate limit exceeded"
     assert int(r.headers["Retry-After"]) >= 1
@@ -663,9 +663,9 @@ def test_docs_have_no_csp():
 
 def test_rate_limit_headers_on_200_and_429():
     c = TestClient(create_app(rate_limit=2, rate_window=60))
-    r1 = c.get("/health")
-    r2 = c.get("/health")
-    r3 = c.get("/health")
+    r1 = c.get("/books")
+    r2 = c.get("/books")
+    r3 = c.get("/books")
     assert r1.status_code == r2.status_code == 200
     assert [r.headers["RateLimit-Limit"] for r in (r1, r2, r3)] == ["2"] * 3
     assert [r.headers["RateLimit-Remaining"] for r in (r1, r2, r3)] == ["1", "0", "0"]
@@ -1007,3 +1007,44 @@ def test_ratings_public_when_api_key_set(monkeypatch):
 
 def test_ratings_in_openapi():
     assert "/books/{book_id}/ratings" in client().get("/openapi.json").json()["paths"]
+
+
+def test_health_exempt_from_rate_limit():
+    c = TestClient(create_app(rate_limit=2, rate_window=60))
+    assert [c.get("/books").status_code for _ in range(2)] == [200, 200]
+    assert c.get("/books").status_code == 429
+    for _ in range(5):
+        r = c.get("/health")
+        assert r.status_code == 200
+        assert "RateLimit-Remaining" not in r.headers
+
+
+def test_health_does_not_reduce_remaining_on_other_routes():
+    c = TestClient(create_app(rate_limit=3, rate_window=60))
+    for _ in range(5):
+        c.get("/health")
+    assert c.get("/books").headers["RateLimit-Remaining"] == "2"
+
+
+def test_other_routes_still_429_problem_json_when_limited():
+    c = TestClient(create_app(rate_limit=1, rate_window=60))
+    c.get("/books")
+    r = c.get("/books")
+    assert r.status_code == 429
+    assert r.headers["content-type"].startswith("application/problem+json")
+    assert "Retry-After" in r.headers and "X-Request-ID" in r.headers
+
+
+def test_validation_failure_still_limited_with_health_exempt():
+    c = TestClient(create_app(rate_limit=2, rate_window=60))
+    assert c.get("/books?limit=0").status_code == 422
+    assert c.get("/health").status_code == 200
+    assert c.get("/books?limit=0").status_code == 422
+    assert c.get("/books?limit=0").status_code == 429
+
+
+def test_auth_failure_still_401_with_health_exempt(monkeypatch):
+    monkeypatch.setenv("API_KEY", "k")
+    c = TestClient(create_app(rate_limit=5, rate_window=60))
+    assert c.get("/health").status_code == 200
+    assert c.post("/books", json={}).status_code == 401

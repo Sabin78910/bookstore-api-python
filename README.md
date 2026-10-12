@@ -24,7 +24,7 @@ Request IDs: every response carries `X-Request-ID`. A client value matching `^[A
 
 Write protection: when the `API_KEY` env var is set, POST/PUT/PATCH/DELETE require an `X-API-Key` header with that value (else 401); reads stay public. Render generates `API_KEY` via `render.yaml` (see the service's Environment tab). Unset locally = writes open.
 
-Rate limiting: responses that pass the limiter carry `RateLimit-Limit`, `RateLimit-Remaining` (never below 0) and `RateLimit-Reset` (integer seconds until the window frees up); 429s also send `Retry-After`.
+Rate limiting: responses that pass the limiter carry `RateLimit-Limit`, `RateLimit-Remaining` (never below 0) and `RateLimit-Reset` (integer seconds until the window frees up); 429s also send `Retry-After`. `GET /health` is exempt from the limiter (not counted, no `RateLimit-*` headers) so uptime probes are never answered with 429.
 
 Security headers: every response (including errors, 304s and 429s) carries `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`; POST/PUT/PATCH/DELETE responses add `Cache-Control: no-store`; all but `/docs` and `/redoc` add `Content-Security-Policy: frame-ancestors 'none'`.
 

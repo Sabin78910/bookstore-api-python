@@ -14,7 +14,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 ```
 
 ## API / Output
-GET /health · GET /books?author=&sort=-price (sort: title, author, price; responses carry `X-Total-Count` and RFC 8288 `Link` rel=next/prev headers) · POST /books · GET /books/{id} · PATCH /books/{id} (partial update, JSON Merge Patch) · POST /books/{id}/sell?qty= · DELETE /books/{id}
+GET /health · GET /books?author=&sort=-price (sort: title, author, price; responses carry `X-Total-Count` and RFC 8288 `Link` rel=next/prev headers) · POST /books · GET /books/{id} · PATCH /books/{id} (partial update, JSON Merge Patch) · GET /books/{id}/ratings (average, count and 1-5 star distribution; public) · POST /books/{id}/sell?qty= · DELETE /books/{id}
 
 Idempotency: `POST /books` and `POST /books/{id}/sell` accept an optional `Idempotency-Key` header (1-255 printable ASCII chars, else 422). A repeat with the same key, path and body returns the first response with `Idempotent-Replayed: true` and does not repeat the side effect; reusing a key for a different path/body is 422. In-memory store, capped at 1000 keys (oldest evicted), lost on restart.
 

@@ -958,3 +958,52 @@ def test_landing_explorer_escapes_server_data():
     c = client()
     c.post("/books", json={"title": "<script>x</script>", "author": "A", "price": 1})
     assert "<script>x</script>" not in c.get("/").text
+
+
+def test_ratings_summary_distribution():
+    c = client()
+    bid = _book(c)
+    for rating in (3, 4, 5):
+        c.post(f"/books/{bid}/reviews", json={"rating": rating})
+    r = c.get(f"/books/{bid}/ratings")
+    assert r.status_code == 200
+    assert r.json() == {
+        "average": 4.0,
+        "count": 3,
+        "distribution": {"1": 0, "2": 0, "3": 1, "4": 1, "5": 1},
+    }
+    assert r.json()["average"] == c.get(f"/books/{bid}").json()["average_rating"]
+
+
+def test_ratings_summary_empty_book():
+    c = client()
+    body = c.get(f"/books/{_book(c)}/ratings").json()
+    assert body == {
+        "average": None,
+        "count": 0,
+        "distribution": {"1": 0, "2": 0, "3": 0, "4": 0, "5": 0},
+    }
+
+
+def test_ratings_unknown_book_404():
+    r = client().get("/books/99/ratings")
+    assert r.status_code == 404
+    assert r.headers["content-type"].startswith("application/problem+json")
+    assert "X-Request-ID" in r.headers
+
+
+def test_ratings_non_integer_id_422():
+    assert client().get("/books/abc/ratings").status_code == 422
+
+
+def test_ratings_public_when_api_key_set(monkeypatch):
+    monkeypatch.setenv("API_KEY", "s3cret")
+    c = client()
+    bid = c.post(
+        "/books", json={"title": "T", "author": "A", "price": 1}, headers={"X-API-Key": "s3cret"}
+    ).json()["id"]
+    assert c.get(f"/books/{bid}/ratings").status_code == 200
+
+
+def test_ratings_in_openapi():
+    assert "/books/{book_id}/ratings" in client().get("/openapi.json").json()["paths"]

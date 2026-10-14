@@ -3,8 +3,6 @@ name: Weekly improvement planner
 # leaders do, and queues at most 2 small, testable improvements as `ready` issues for the cloud agent.
 # Bounded on purpose: no new issue while 3 or more are still queued.
 on:
-  schedule:
-    - cron: "20 4 * * *"
   workflow_dispatch:
 
 permissions:
@@ -51,4 +49,4 @@ jobs:
         if: always() && steps.queue.outputs.open < 3
         run: |
           sleep 15  # the issue list can lag right after creation; the agent exits fast if nothing is queued
-          gh workflow run claude-agent.yml
+          echo "agent restart disabled by owner"
